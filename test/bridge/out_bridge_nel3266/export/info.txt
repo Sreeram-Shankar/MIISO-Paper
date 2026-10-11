@@ -1,0 +1,8 @@
+nF=233
+cmax=0.1030284188634762
+T=11.5
+dt_save=0.05
+nel=(32, 6, 6)
+faces=h1,h2,h3,h4,h5,w1,w2,w3,w4,w5,e0,e1
+nwires=511
+wire_npts=32

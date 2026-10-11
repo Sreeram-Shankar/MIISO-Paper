@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Bridge continuum |u|</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #0e0e12; color: #eee; }
+  header { padding: 10px 16px; border-bottom: 1px solid #2a2a35; display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; }
+  header h1 { font-size: 1.05rem; font-weight: 600; margin: 0; }
+  header .meta { color: #9aa; font-size: 0.85rem; }
+  #plot3d { width: 100%; height: calc(100vh - 120px); }
+  .controls { position: sticky; bottom: 0; background: #16161d; border-top: 1px solid #2a2a35; padding: 12px 16px 16px; display: grid; gap: 8px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  button { background: #2b2b3a; color: #fff; border: 1px solid #3d3d52; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  input[type=range] { flex: 1; min-width: 200px; accent-color: #fb9b06; }
+  #timeLabel { font-variant-numeric: tabular-nums; font-size: 1.05rem; min-width: 9rem; color: #fcffa4; }
+  #playRate { width: 5rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>IGA continuum arch — |u| (η / ζ layers)</h1>
+  <div class="meta">nel=(32, 6, 6) · T=11.5s · frames=233 · faces=12</div>
+</header>
+<div id="plot3d"></div>
+<div class="controls">
+  <div class="row">
+    <button id="btnPlay" type="button">Play</button>
+    <label>speed <input id="playRate" type="number" value="1" min="0.1" max="10" step="0.1"/> ×</label>
+    <span id="timeLabel">t = 0.00 s</span>
+  </div>
+  <div class="row">
+    <span>0</span>
+    <input id="slider" type="range" min="0" max="232" value="0" step="1"/>
+    <span>11.5s</span>
+  </div>
+</div>
+<script>
+fetch('bridge_video_data.json')
+  .then(r => r.json())
+  .then(D => {
+    const faces = D.faces;
+    let i = 0, playing = false, timer = null;
+    function traces(frame) {
+      return faces.map((f, idx) => ({
+        type: 'surface', x: D.geom[f].X, y: D.geom[f].Y, z: D.geom[f].Z,
+        surfacecolor: frame.C[f], cmin: 0, cmax: D.cmax, colorscale: D.colorscale,
+        showscale: idx === 0, colorbar: { title: '|u| [m]', len: 0.55 },
+        opacity: D.opacity[f], hoverinfo: 'skip', name: f
+      }));
+    }
+    function layout(t) {
+      return {
+        paper_bgcolor: '#0e0e12', font: { color: '#ddd' },
+        margin: { l: 0, r: 0, t: 28, b: 0 },
+        title: { text: 'continuum · |u| · t=' + t.toFixed(2) + 's', font: { size: 14 } },
+        scene: {
+          xaxis: { title: 'span x [m]', gridcolor: '#333', backgroundcolor: '#0e0e12', showbackground: true },
+          yaxis: { title: 'width z [m]', gridcolor: '#333', backgroundcolor: '#0e0e12', showbackground: true },
+          zaxis: { title: 'height y [m]', gridcolor: '#333', backgroundcolor: '#0e0e12', showbackground: true },
+          aspectmode: 'manual', aspectratio: { x: 5.0, y: 1.35, z: 1.15 },
+          camera: { eye: { x: 0.05, y: -1.25, z: 0.72 }, up: { x: 0, y: 0, z: 1 } }
+        }
+      };
+    }
+    Plotly.newPlot('plot3d', traces(D.frames[0]), layout(D.frames[0].t), { responsive: true });
+    const slider = document.getElementById('slider');
+    const timeLabel = document.getElementById('timeLabel');
+    const btn = document.getElementById('btnPlay');
+    const rate = document.getElementById('playRate');
+    function show(k) {
+      i = k; const f = D.frames[k];
+      slider.value = k; timeLabel.textContent = 't = ' + f.t.toFixed(2) + ' s';
+      Plotly.restyle('plot3d', { surfacecolor: faces.map(name => f.C[name]) });
+      Plotly.relayout('plot3d', { 'title.text': 'continuum · |u| · t=' + f.t.toFixed(2) + 's' });
+    }
+    slider.addEventListener('input', () => show(+slider.value));
+    function tick() {
+      if (!playing) return;
+      show((i + 1) % D.frames.length);
+      timer = setTimeout(tick, Math.max(20, 50 / Math.max(0.1, +rate.value)));
+    }
+    btn.addEventListener('click', () => {
+      playing = !playing; btn.textContent = playing ? 'Pause' : 'Play';
+      if (playing) tick(); else if (timer) clearTimeout(timer);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === ' ') { e.preventDefault(); btn.click(); }
+      if (e.key === 'ArrowRight') show(Math.min(i + 1, D.frames.length - 1));
+      if (e.key === 'ArrowLeft') show(Math.max(i - 1, 0));
+    });
+  })
+  .catch(err => {
+    document.body.innerHTML = '<pre style="padding:2rem;color:#f66">Failed to load data\n' + err + '</pre>';
+  });
+</script>
+</body>
+</html>
