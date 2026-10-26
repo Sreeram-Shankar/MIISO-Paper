@@ -1,5 +1,5 @@
 #MIISO2, Modal Integrator for Isogeometric Stabilization of Outliers (order 2).
-#the construction and methodi is described in the paper. The pade maps
+#the construction and methd is described in the paper. The pade maps
 #are the [1,1] and [0,2] Pades. This method has no repair
 
 include(joinpath(@__DIR__, "utilities.jl"))

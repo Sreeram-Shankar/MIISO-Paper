@@ -1,4 +1,4 @@
-# Continuum arch, MIISO4 -> out/summary.json
+# calls the setup of the bridge and runs it with MIISO4
 
 include(joinpath(@__DIR__, "setup.jl"))
 using JSON

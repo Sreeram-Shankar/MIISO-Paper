@@ -1,9 +1,13 @@
-# Arch bridge geometry, SVK, NURBS I/O. Included by run.jl.
+# Arch bridge geometry setup using NURBS.
+#setup is done with Ferrite and FerriteIGA.
+#The majority of this code is pulled from
+#previous earthquake engineering codes
 
 include(joinpath(@__DIR__, "..", "..", "src", "miiso4.jl"))
 
 using Ferrite, FerriteIGA, LinearAlgebra, SparseArrays, Random
 
+# Bridge parameters
 Base.@kwdef struct BridgeParams
     L::Float64 = 120.0
     f::Float64 = 24.0
@@ -34,7 +38,7 @@ Base.@kwdef struct BridgeParams
     jac_max_lag::Int = 50
 end
 
-# mesh: 1D refine then tensor product (FerriteIGA mid-dir knotinsertion is unsafe)
+# refinment of 1D NURBS curves with the Ferrite h and p refinement functions.
 function _refine_1d(cps::Vector{<:Vec}, ws::Vector{Float64}, kv::Vector{Float64}, order::Int, p_target::Int, nel::Int)
     cps, ws, kv = copy(cps), copy(ws), copy(kv)
     kvt = (kv,)
@@ -47,6 +51,7 @@ function _refine_1d(cps::Vector{<:Vec}, ws::Vector{Float64}, kv::Vector{Float64}
     return cps, ws, kvt[1], order
 end
 
+# arch bridge mesh setup, returns the mesh and the parameters.
 function arch_rib_mesh(P::BridgeParams)
     (; L, f, d, b, p, nel) = P
     R = (L^2 / 4 + f^2) / (2f)
@@ -67,6 +72,7 @@ function arch_rib_mesh(P::BridgeParams)
     return NURBSMesh((a_kv, r_kv, z_kv), (oa, or_, oz), cps, ws), (R=R, theta=theta, yc=yc, rin=rin, rout=rout)
 end
 
+# B-splines
 function bsplines(kv::Vector{Float64}, p::Int, x::Float64)
     m = length(kv) - 1
     N = zeros(m)
@@ -92,12 +98,14 @@ function bsplines(kv::Vector{Float64}, p::Int, x::Float64)
     return N, dN
 end
 
+# Gaaaaaussian quadrautre
 function gauss_legendre(n)
     J = SymTridiagonal(zeros(n), [k / sqrt(4k^2 - 1) for k in 1:n-1])
     F = eigen(J)
     return F.values, 2 .* F.vectors[1, :] .^ 2
 end
 
+#Quadrature points on the NURBS cyurves
 function span_quadrature(kv, nq; lo=kv[1], hi=kv[end])
     xg, wg = gauss_legendre(nq)
     X = Float64[]; W = Float64[]
@@ -113,6 +121,7 @@ struct ArchDir
     kv::Vector{Float64}; p::Int; w::Vector{Float64}; P::Vector{NTuple{2,Float64}}
 end
 
+# Evaluation of the geometry
 function arch_eval(A::ArchDir, xi)
     N, dN = bsplines(A.kv, A.p, xi)
     W = dot(A.w, N); dW = dot(A.w, dN)
@@ -125,6 +134,7 @@ function arch_eval(A::ArchDir, xi)
     return R, dR, hypot(dax, day), atan(ax, ay)
 end
 
+# Assembly of the mass, stiffness, and gravity operators
 function arch_operators(A::ArchDir; nq=A.p + 3)
     n = length(A.w)
     M = zeros(n, n); K = zeros(n, n); g = zeros(n)
@@ -136,6 +146,7 @@ function arch_operators(A::ArchDir; nq=A.p + 3)
     return M, K, g
 end
 
+# Assembly of the mass, stiffness, and gravity operators for a line element
 function line_operators(kv, p, x0, ell; weight=x -> 1.0, nq=p + 3)
     n = length(kv) - p - 1
     M = zeros(n, n); K = zeros(n, n); g = zeros(n)
@@ -148,6 +159,7 @@ function line_operators(kv, p, x0, ell; weight=x -> 1.0, nq=p + 3)
     return M, K, g
 end
 
+# 3D kronecker product
 function kron3(A1, A2, A3, X::Array{Float64,4})
     c, n1, n2, n3 = size(X)
     Y = permutedims(X, (2, 1, 3, 4)); Y = reshape(A1 * reshape(Y, n1, :), n1, c, n2, n3)
@@ -156,6 +168,7 @@ function kron3(A1, A2, A3, X::Array{Float64,4})
     return permutedims(Y, (2, 3, 4, 1))
 end
 
+# 3D kronecker product in place
 function kron3!(out::Array{Float64,4}, A1, A2, A3, X::Array{Float64,4},
                 W1::Array{Float64,4}, W2::Array{Float64,4})
     c, n1, n2, n3 = size(X)
@@ -171,6 +184,7 @@ function kron3!(out::Array{Float64,4}, A1, A2, A3, X::Array{Float64,4},
     return out
 end
 
+# Inverse of the mass matrix
 minv(S, r::AbstractVector) = vec(kron3(S.iMa, S.iMr, S.iMz, reshape(r, S.shape))) ./ S.rho_eff
 
 function minv!(out::AbstractVector{Float64}, S, r::AbstractVector)
@@ -184,6 +198,7 @@ function minv!(out::AbstractVector{Float64}, S, r::AbstractVector)
     return out
 end
 
+# The synehetic earthquake motion comes from a random process, which is where the seed is used
 function synthetic_record(; dt=0.005, duration=10.0, pga=0.4, g=9.81, omega_g=15.6, zeta_g=0.6,
                           t1=1.5, t2=6.0, c=0.35, rng=Random.default_rng())
     nt = round(Int, duration / dt) + 1
@@ -203,6 +218,7 @@ function synthetic_record(; dt=0.005, duration=10.0, pga=0.4, g=9.81, omega_g=15
     return a .* (pga * g / maximum(abs, a))
 end
 
+#interpolation of the earthquake record
 function interp_record(a::Vector{Float64}, dt, t)
     tau = float(t) / dt
     i = floor(Int, tau)
@@ -211,6 +227,7 @@ function interp_record(a::Vector{Float64}, dt, t)
     return a[i + 1] + (tau - i) * s, s / dt
 end
 
+#bisection method to find the cutoff frequency
 function bisect(g, a, b; iters=80)
     ga = g(a)
     for _ in 1:iters
@@ -222,7 +239,7 @@ end
 
 kbar(p, bc::Symbol) = bc === :fixed ? (p - 1) ÷ 2 : p ÷ 2
 
-# sparse J: [dq;dv] -> [dv; -M^{-1}(Kt dq + a1 K0 dv) - a0 dv]
+#sparse Jacobian operator
 mutable struct BridgeJOp
     Kt::SparseMatrixCSC{Float64,Int}
     K0::SparseMatrixCSC{Float64,Int}
@@ -253,6 +270,7 @@ function (J::BridgeJOp)(x::AbstractVector)
     return b.out
 end
 
+#free degree of freedom mapping and sparsity patterns
 function free_sparsity(grid, free, nnodes)
     g2f = zeros(Int, 3 * nnodes)
     @inbounds for (i, g) in enumerate(free)
@@ -288,6 +306,7 @@ function free_sparsity(grid, free, nnodes)
     return SparseMatrixCSC(nf, nf, colptr, rowval, ones(nnz)), g2f
 end
 
+#stiffness matrix assembly
 function assemble_K!(Kt::SparseMatrixCSC, K0, S, U::AbstractVector{<:Real}, g2f; do_K0::Bool=false)
     fill!(nonzeros(Kt), 0.0)
     aKt = start_assemble(Kt)
@@ -359,7 +378,7 @@ function assemble_K!(Kt::SparseMatrixCSC, K0, S, U::AbstractVector{<:Real}, g2f;
     return Kt, K0
 end
 
-# SVK fint; thread-local buffers (Ferrite coloring is too coarse here)
+# Ferrite coloring is too coarse here, so we use thread-local buffers
 function element_fint!(fint::Vector{Float64}, S, U::AbstractVector{Float64})
     lambda, mu = S.lambda, S.mu
     ncells = getncells(S.grid)
@@ -405,6 +424,7 @@ function element_fint!(fint::Vector{Float64}, S, U::AbstractVector{Float64})
     return fint
 end
 
+#arch bridge system setup that gives the whole operators
 function arch_bridge_system(P::BridgeParams=BridgeParams())
     (; p, E, nu, rho, d, b, L, g) = P
     mesh, geo = arch_rib_mesh(P)
@@ -488,6 +508,8 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
     end
     omega_c = cs * sqrt(minimum(lambda_bdry))
 
+    #here we use FerriteIGA's routines. More information on this can be found
+    #in the FerriteIGA documentation and the talk I gave at the FerriteIGA conference 2026.
     grid = BezierGrid(mesh)
     ip = IGAInterpolation{RefHexahedron, p}()^3
     cv0 = BezierCellValues(QuadratureRule{RefHexahedron}(p + 1), ip)
@@ -577,6 +599,7 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
             iota_x=iota_x, iota_y=iota_y, ax=ax, ay=ay, dt_rec=dt_rec, P=P, gfac=gfac)
 end
 
+#evaluation of the NURBS point
 function nurbs_point(kv, orders, cps::AbstractMatrix, ws, xi, eta, zeta, Ucp)
     n1, n2, n3 = length.(kv) .- orders .- 1
     Na, _ = bsplines(kv[1], orders[1], xi)
@@ -597,6 +620,7 @@ function nurbs_point(kv, orders, cps::AbstractMatrix, ws, xi, eta, zeta, Ucp)
     return (x * invW, y * invW, z * invW), (ux * invW, uy * invW, uz * invW)
 end
 
+#conversion of the control points to a matrix
 function cps_matrix(control_points)
     n = length(control_points)
     C = Matrix{Float64}(undef, 3, n)
@@ -607,4 +631,5 @@ function cps_matrix(control_points)
     return C
 end
 
+#workspace for the U matrix
 make_U_workspace(n1, n2, n3) = (Ucp = zeros(3, n1, n2, n3); (Ucp, reshape(Ucp, :)))

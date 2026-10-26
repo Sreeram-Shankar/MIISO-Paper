@@ -1,4 +1,4 @@
-# 2D IGA membrane physics + runners. Included by convergence / cost / scaling.
+#full setup and some cases of the 2d nonlinear membrane problem
 
 using LinearAlgebra
 using SparseArrays

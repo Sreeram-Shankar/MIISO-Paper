@@ -1,4 +1,5 @@
-# Temporal convergence MIISO2-6 -> CONV.out
+# convergence verification. coarser time step are used so that we can see the convergence rate
+#for higher order memebers
 
 include(joinpath(@__DIR__, "setup.jl"))
 

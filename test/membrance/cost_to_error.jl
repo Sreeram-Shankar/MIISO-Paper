@@ -1,4 +1,6 @@
-# Cost vs accuracy -> COST.out
+#cost to error. this is a measure of the accuracy of the method
+#as a function of the time step. This also has the IRAM placement turned on,
+#so it is including a setup cost and is a lower bound on the speedup cost to error.
 
 include(joinpath(@__DIR__, "setup.jl"))
 

@@ -1,4 +1,5 @@
-# Mesh scaling at fixed h -> SCALE.out
+#cost to scaling. in this case, the IRAM placement is turned on 
+#so it is actually including a setup cost and is a lower bound on the speeddup cost to scale.
 
 include(joinpath(@__DIR__, "setup.jl"))
 
