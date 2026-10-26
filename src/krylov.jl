@@ -1,12 +1,14 @@
+#linear interpolation of a tabulated stability-boundary curve
 function instability_interpolation(x, xp, yp)
     x <= xp[1] && return yp[1]
     x >= xp[end] && return yp[end]
     i = searchsortedlast(xp, x)
-    t = (x - xp[i]) / (xp[i + 1] - xp[i])
-    return (1 - t) * yp[i] + t * yp[i + 1]
+    t = (x - xp[i]) / (xp[i+1] - xp[i])
+    return (1 - t) * yp[i] + t * yp[i+1]
 end
 
-#mag–arg blend of two stability functions (used to repair unstable Padé islands)
+#mag-arg blend of two stability functions.
+#used to repair unstable Pade islands inside R_D.
 function blend_RD(r0, r1, th)
     th <= 0 && return r0
     th >= 1 && return r1
@@ -15,8 +17,10 @@ function blend_RD(r0, r1, th)
     return mag * cis(arg)
 end
 
-#per-mode blend of conservative R_C and dissipative R_D across the taper band [omega0, omega_c]
-function R_blend(z_vals, omega0, omega_c, R_C, R_D; p::Int=4)
+#per-mode blend of conservative R_C and dissipative R_D
+#across the taper band [omega0, omega_c].
+#theta goes 0 -> 1 as |z| goes omega0 -> omega_c.
+function R_blend(z_vals, omega0, omega_c, R_C, R_D; p::Int = 4)
     scalar = z_vals isa Number
     z = ComplexF64.(scalar ? [z_vals] : vec(z_vals))
     isempty(z) && return scalar ? 0.0im : ComplexF64[]
@@ -41,9 +45,11 @@ function R_blend(z_vals, omega0, omega_c, R_C, R_D; p::Int=4)
         Rc, Rd = ComplexF64.(R_C.(zm)), ComplexF64.(R_D.(zm))
         order = sortperm(abs.(zm))
         arg_c, arg_d = angle.(Rc[order]), angle.(Rd[order])
-        for i in 2:length(arg_c)
-            d = arg_c[i] - arg_c[i - 1]; arg_c[i] = arg_c[i - 1] + (d - 2π * round(d / 2π))
-            d = arg_d[i] - arg_d[i - 1]; arg_d[i] = arg_d[i - 1] + (d - 2π * round(d / 2π))
+        for i = 2:length(arg_c)
+            d = arg_c[i] - arg_c[i-1]
+            arg_c[i] = arg_c[i-1] + (d - 2π * round(d / 2π))
+            d = arg_d[i] - arg_d[i-1]
+            arg_d[i] = arg_d[i-1] + (d - 2π * round(d / 2π))
         end
         ϕc, ϕd = similar(thm), similar(thm)
         ϕc[order], ϕd[order] = arg_c, arg_d
@@ -53,37 +59,39 @@ function R_blend(z_vals, omega0, omega_c, R_C, R_D; p::Int=4)
 end
 
 
-#Taylor coefficients r_0, r_1, ... of the conservative parent R_C about z = 0, computed once per
-#R_C by a trapezoidal Cauchy integral on |z| = ρ (the Padé poles lie well outside this circle).
+#Taylor coefficients r_0, r_1, ... of the conservative parent R_C about z = 0.
+#computed once per R_C by a trapezoidal Cauchy integral on |z| = rho
+#(the Pade poles lie well outside this circle).
+#cached in _rc_series under a lock so parallel branches can share it.
 const _rc_series = IdDict{Any,Vector{ComplexF64}}()
 const _rc_lock = ReentrantLock()
-function rc_series(R_C; nterms::Int=30, ρ=1.0, N::Int=128)
+function rc_series(R_C; nterms::Int = 30, ρ = 1.0, N::Int = 128)
     lock(_rc_lock) do
         get!(_rc_series, R_C) do
-            θ = [2π * (q - 1) / N for q in 1:N]
+            θ = [2π * (q - 1) / N for q = 1:N]
             vals = [ComplexF64(R_C(ρ * cis(t))) for t in θ]
-            [sum(vals[q] * cis(-j * θ[q]) for q in 1:N) / (N * ρ^j) for j in 0:nterms-1]
+            [sum(vals[q] * cis(-j * θ[q]) for q = 1:N) / (N * ρ^j) for j = 0:(nterms-1)]
         end
     end
 end
 
 #phi_k of the blended map, any k >= 1.
-#Away from 0: the (R-1)/z recurrence φ̃_{j+1} = (φ̃_j - 1/j!)/z.
-#Near 0 (|z| < zsmall and below the taper, where R = R_C exactly): the Taylor series of R_C,
-#φ̃_k(z) = Σ_{j≥k} r_j z^{j-k}, which avoids the cancellation of k divisions by a small z.
+#away from 0: the (R-1)/z recurrence phi_{j+1} = (phi_j - 1/j!)/z.
+#near 0 (|z| < zsmall and below the taper, where R = R_C exactly):
+#the Taylor series of R_C, which avoids cancellation from dividing by a small z.
 function phi_from_R!(out, z, R, r, k_phi, zs)
     @inbounds for i in eachindex(z)
         ζ = z[i]
         if abs(ζ) < zs
             s = zero(ComplexF64)
-            for j in length(r)-1:-1:k_phi
-                s = s * ζ + r[j + 1]
+            for j = (length(r)-1):-1:k_phi
+                s = s * ζ + r[j+1]
             end
             out[i] = s
         else
             φ = R[i]
             fact = 1.0
-            for j in 0:k_phi-1
+            for j = 0:(k_phi-1)
                 j > 0 && (fact *= j)
                 φ = (φ - 1 / fact) / ζ
             end
@@ -93,15 +101,17 @@ function phi_from_R!(out, z, R, r, k_phi, zs)
     return out
 end
 
-function phi_blend(z_vals, omega0, omega_c, R_C, R_D, k_phi; p::Int=4, zsmall=0.25)
+#convenience wrapper: R_blend then phi_from_R! for a single k_phi
+function phi_blend(z_vals, omega0, omega_c, R_C, R_D, k_phi; p::Int = 4, zsmall = 0.25)
     z = ComplexF64.(vec(z_vals))
-    R = R_blend(z, omega0, omega_c, R_C, R_D; p=p)
+    R = R_blend(z, omega0, omega_c, R_C, R_D; p = p)
     r = rc_series(R_C)
     zs = min(float(zsmall), float(omega0))
     return phi_from_R!(similar(z), z, R, r, k_phi, zs)
 end
 
-#spec is (k, c) → φ_k(c z), or (terms, c) with terms = ((k, a), ...) → Σ a φ_k(c z).
+#spec is (k, c) -> phi_k(c z), or (terms, c) with terms = ((k, a), ...)
+#-> sum_a a * phi_k(c z). used by the multi-stage MIISO maps.
 function phi_from_spec(z, R, r, spec, zs)
     if spec[1] isa Integer
         return phi_from_R!(similar(z), z, R, r, Int(spec[1]), zs)
@@ -116,9 +126,9 @@ function phi_from_spec(z, R, r, spec, zs)
     return acc
 end
 
-#φ̃ action on e1 for every spec, from one eigendecomposition of H_j.
-#Specs that share the same scale c reuse one R_blend.
-function phi_coefs(Hj, specs, omega0, omega_c, R_C, R_D; p::Int=4, zsmall=0.25)
+#phi action on e1 for every spec, from one eigendecomposition of H_j.
+#specs that share the same scale c reuse one R_blend.
+function phi_coefs(Hj, specs, omega0, omega_c, R_C, R_D; p::Int = 4, zsmall = 0.25)
     j = size(Hj, 1)
     F = eigen(Matrix(Hj))
     vals, X = F.values, F.vectors
@@ -133,23 +143,24 @@ function phi_coefs(Hj, specs, omega0, omega_c, R_C, R_D; p::Int=4, zsmall=0.25)
         sc = float(spec[end])
         z, R = get!(R_by_sc, sc) do
             zz = ComplexF64.(sc .* vals)
-            (zz, R_blend(zz, omega0, omega_c, R_C, R_D; p=p))
+            (zz, R_blend(zz, omega0, omega_c, R_C, R_D; p = p))
         end
         C[:, i] .= real.(X * (phi_from_spec(z, R, r, spec, zs) .* ξ))
     end
     return C
 end
 
-#Largest change, over the specs, between the dimension-j and dimension-jprev coefficients.
+#largest change, over the specs, between the dimension-j
+#and dimension-jprev coefficients. used as the Arnoldi stop test.
 function coef_change(C, Cprev)
     jp = size(Cprev, 1)
     Δ = 0.0
     @inbounds for i in axes(C, 2)
         s = 0.0
-        for r in 1:jp
+        for r = 1:jp
             s += (C[r, i] - Cprev[r, i])^2
         end
-        for r in jp+1:size(C, 1)
+        for r = (jp+1):size(C, 1)
             s += C[r, i]^2
         end
         Δ = max(Δ, sqrt(s))
@@ -157,9 +168,11 @@ function coef_change(C, Cprev)
     return Δ
 end
 
-#CGS2 Arnoldi on hJ. Stops when every requested φ̃-action has changed by less than
-#safety*tol over the last d vectors. coefs(Hj) returns the matrix from phi_coefs.
-function arnoldi(ws, J, v, mmax, h, coefs, tol; jmin::Int=2, d::Int=2, safety=0.1)
+#CGS2 Arnoldi on hJ.
+#stops when every requested phi-action has changed by less than
+#safety*tol over the last d vectors.
+#coefs(Hj) returns the coefficient matrix from phi_coefs.
+function arnoldi(ws, J, v, mmax, h, coefs, tol; jmin::Int = 2, d::Int = 2, safety = 0.1)
     n = length(v)
     mmax = clamp(Int(mmax), 1, n)
     β = norm(v)
@@ -169,11 +182,11 @@ function arnoldi(ws, J, v, mmax, h, coefs, tol; jmin::Int=2, d::Int=2, safety=0.
     @views copyto!(V[:, 1], v)
     rmul!(@view(V[:, 1]), 1 / β)
     Cprev = nothing
-    for j in 1:mmax
+    for j = 1:mmax
         xj = @view V[:, j]
         mul_hJ!(w, J, xj, h, ws)
         @views Vj, hj, Hcol = V[:, 1:j], hcol[1:j], H[1:j, j]
-        for _ in 1:2
+        for _ = 1:2
             mul!(hj, transpose(Vj), w)
             Hcol .+= hj
             mul!(w, Vj, hj, -1.0, 1.0)
@@ -182,33 +195,50 @@ function arnoldi(ws, J, v, mmax, h, coefs, tol; jmin::Int=2, d::Int=2, safety=0.
         breakdown = hn < 1e-14
         if breakdown || j == mmax || (j >= jmin && (j - jmin) % d == 0)
             C = coefs(@view(H[1:j, 1:j]))
-            if breakdown || j == mmax || (Cprev !== nothing && β * coef_change(C, Cprev) < safety * tol)
+            if breakdown ||
+               j == mmax ||
+               (Cprev !== nothing && β * coef_change(C, Cprev) < safety * tol)
                 return @view(V[:, 1:j]), C, β, j
             end
             Cprev = C
         end
-        H[j + 1, j] = hn
-        @views copyto!(V[:, j + 1], w)
-        rmul!(@view(V[:, j + 1]), 1 / hn)
+        H[j+1, j] = hn
+        @views copyto!(V[:, j+1], w)
+        rmul!(@view(V[:, j+1]), 1 / hn)
     end
 end
 
-#φ_k(hJ) v. krylov_dim_max is the Arnoldi cap; adaptive tol picks j ≤ that.
-#Outputs are bump-allocated from ws.phi_pool (call reset_phi_pool! once per step).
-function apply_phi(ws, J, v, h, omega0, omega_c, krylov_dim_max, R_C, R_D, specs, tol; p::Int=4)
+#phi_k(hJ) v for every requested spec.
+#krylov_dim_max is the Arnoldi cap; adaptive tol picks j <= that.
+#outputs are bump-allocated from ws.phi_pool
+#(call reset_phi_pool! once per step).
+function apply_phi(
+    ws,
+    J,
+    v,
+    h,
+    omega0,
+    omega_c,
+    krylov_dim_max,
+    R_C,
+    R_D,
+    specs,
+    tol;
+    p::Int = 4,
+)
     v = asvec(v)
     n = length(v)
     nspecs = length(specs)
-    coefs = Hj -> phi_coefs(Hj, specs, omega0, omega_c, R_C, R_D; p=p)
+    coefs = Hj -> phi_coefs(Hj, specs, omega0, omega_c, R_C, R_D; p = p)
     V, C, β, j = arnoldi(ws, J, v, krylov_dim_max, float(h), coefs, tol)
     outs = Vector{Vector{Float64}}(undef, nspecs)
     if j == 0
-        for i in 1:nspecs
+        for i = 1:nspecs
             outs[i] = fill!(take_phi_out!(ws, n), 0.0)
         end
         return outs
     end
-    for i in 1:nspecs
+    for i = 1:nspecs
         out = take_phi_out!(ws, n)
         mul!(out, V, @view(C[:, i]), β, 0.0)
         outs[i] = out
@@ -216,11 +246,23 @@ function apply_phi(ws, J, v, h, omega0, omega_c, krylov_dim_max, R_C, R_D, specs
     return outs
 end
 
-#Shared preamble of one step: state, Jacobian, ft, cutoff, Krylov dim cap.
-#cutoff_adaptive is unused here (single shot); ω_c from Omega_c or one Arnoldi+Rayleigh.
+#shared preamble of one step: state, Jacobian, ft, cutoff, Krylov dim cap.
+#cutoff_adaptive is unused here (single shot);
+#omega_c comes from Omega_c or one Arnoldi+Rayleigh.
 #fn/ft are copied so f/ft may return reused buffers.
-function prepare(f, t, y, h; setup=nothing, k=nothing, Omega_c=nothing,
-                 J=nothing, ft=nothing, krylov_dim_max::Int=40, cutoff_adaptive=true)
+function prepare(
+    f,
+    t,
+    y,
+    h;
+    setup = nothing,
+    k = nothing,
+    Omega_c = nothing,
+    J = nothing,
+    ft = nothing,
+    krylov_dim_max::Int = 40,
+    cutoff_adaptive = true,
+)
     y = asvec(y)
     fn = copy(asvec(f(t, y)))
     n = length(y)
@@ -243,13 +285,32 @@ function prepare(f, t, y, h; setup=nothing, k=nothing, Omega_c=nothing,
     return y, fn, J, ft, oc, km
 end
 
-#Integrate with fixed step. ω_c from Omega_c or IRAM on J (k from setup/k).
-#cutoff_adaptive=true  → Rayleigh-update ω_c every step (needs IRAM cache).
-#cutoff_adaptive=false → freeze ω_c after the initial value (given or one-shot IRAM).
-#krylov_dim_max: Arnoldi workspace / hard cap (default 40). Adaptive tol picks j ≤ that.
-function miiso_solve(step, f, y0, T, h; t0=0.0, setup=nothing, k=nothing, Omega_c=nothing,
-                     J=nothing, ft=nothing, krylov_dim_max::Int=40, cutoff_adaptive=true,
-                     omega_frac=0.99, taper_order=4, tau=1e-10, n_ws=2, callback=nothing)
+#integrate with fixed step.
+#omega_c from Omega_c or IRAM on J (k from setup/k).
+#cutoff_adaptive=true  -> Rayleigh-update omega_c every step (needs IRAM cache).
+#cutoff_adaptive=false -> freeze omega_c after the initial value.
+#krylov_dim_max is the Arnoldi workspace / hard cap (default 40).
+#adaptive tol picks j <= that. n_ws is how many KrylovWS branches to keep.
+function miiso_solve(
+    step,
+    f,
+    y0,
+    T,
+    h;
+    t0 = 0.0,
+    setup = nothing,
+    k = nothing,
+    Omega_c = nothing,
+    J = nothing,
+    ft = nothing,
+    krylov_dim_max::Int = 40,
+    cutoff_adaptive = true,
+    omega_frac = 0.99,
+    taper_order = 4,
+    tau = 1e-10,
+    n_ws = 2,
+    callback = nothing,
+)
     y = vec(Float64.(y0))
     t = float(t0)
     nsteps = max(Int(round((float(T) - t) / float(h))), 0)
@@ -273,7 +334,7 @@ function miiso_solve(step, f, y0, T, h; t0=0.0, setup=nothing, k=nothing, Omega_
     end
     callback !== nothing && callback(t, y)
 
-    for _ in 1:nsteps
+    for _ = 1:nsteps
         Jj = J_call ? J(t, y) : (J === nothing ? JacVec(f, t, y) : J)
         ftj = if ft_call
             ft(t, y)
@@ -289,8 +350,20 @@ function miiso_solve(step, f, y0, T, h; t0=0.0, setup=nothing, k=nothing, Omega_
         for wsi in ws
             reset_phi_pool!(wsi)
         end
-        y = step(f, t, y, h; Omega_c=oc, J=Jj, ft=ftj, krylov_dim_max=km,
-                 omega_frac, taper_order, ws, tau)
+        y = step(
+            f,
+            t,
+            y,
+            h;
+            Omega_c = oc,
+            J = Jj,
+            ft = ftj,
+            krylov_dim_max = km,
+            omega_frac,
+            taper_order,
+            ws,
+            tau,
+        )
         t += h
         callback !== nothing && callback(t, y)
     end

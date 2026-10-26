@@ -1,12 +1,7 @@
-"""Rudimentary MIISO6 amplification maps (R_C / R_D / R_blend only).
-
-R_C = Gauss (3,3). R_D = Padé (0,6) repaired by (2,4) on the 0/6
-instability islands about the LHP poles of R06 (≈ −0.80 ± 3.70i).
-"""
-
+# MIISO6 maps: Gauss (3,3) / Padé (0,6) repaired by (2,4)
 import numpy as np
 
-# Gauss / conservative 6th-order 3/3 diagonal Padé
+#Gauss (3,3) conservative
 def R_C(z):
     z = complex(z)
     return (1 + z / 2 + z ** 2 / 10 + z ** 3 / 120) / (

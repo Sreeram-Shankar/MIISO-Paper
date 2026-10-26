@@ -1,19 +1,13 @@
-# Chung–Hulbert generalized-α with classical ρ∞ parameters.
-# Full Newton: Kt(q_af) + K_eff factor every Newton iteration; residual every iter.
-#
-#   y, nfac = genalpha_solve(fint, Kt, M, mass_solve, u0, v0, T, h; rho_inf=1.0)
-#
-# Optional Rayleigh C and force(t) for M ü + C ú + fint(u) = force(t):
-#   genalpha_solve(..., C=C, force=force)
-#
-# fint(u) → internal force,  Kt(u) → sparse tangent,
-# M → sparse/dense mass,  mass_solve(r) → M⁻¹ r.
-# Residual: M a_am + C v_af + fint(q_af) = force(t),  K_eff = (1−α_m)M + c_C C + c_K Kt.
-# ρ∞ = 1 is spectrally undamped. Returned state is [u; ú].
+#Chung-Hulbert generalized-alpha with classical rho_inf parameters.
+#at each step, we solve the Newton system Kt(q_af) + K_eff.
+#fint(u) is the internal force, Kt(u) is the sparse tangent,
+#M is the mass, mass_solve(r) is M^{-1} r.
+#optional Rayleigh C and force(t) for M u_tt + C u_t + fint(u) = force(t).
 
 using SparseArrays
 using LinearAlgebra
 
+#classical Chung-Hulbert (alpha_m, alpha_f, beta, gamma) from rho_inf
 function classical_gen_alpha(rho_inf)
     ρ = float(rho_inf)
     αm = (2ρ - 1) / (1 + ρ)
@@ -23,9 +17,9 @@ function classical_gen_alpha(rho_inf)
     return αm, αf, β, γ
 end
 
-# HHT-α ⊂ generalized-α with α_m = 0. Hilber α ∈ [-1/3, 0]; α = -0.05 is the
-# usual structural / bridge default (mild high-frequency damping).
-function hht_alpha_params(α=-0.05)
+#HHT-alpha is the special case alpha_m = 0 of generalized-alpha.
+#Hilber alpha in [-1/3, 0]; alpha = -0.05 is the usual structural default.
+function hht_alpha_params(α = -0.05)
     αm = 0.0
     αf = -float(α)
     β = ((1 - αm + αf) / 2)^2
@@ -33,9 +27,25 @@ function hht_alpha_params(α=-0.05)
     return αm, αf, β, γ
 end
 
-function genalpha_solve(fint, Kt, M, mass_solve, u0, v0, T, h; rho_inf=1.0, t0=0.0,
-                        callback=nothing, progress=nothing, C=nothing, force=nothing,
-                        params=nothing)
+#fixed-step generalized-alpha integrate from t0 to T.
+#returns (y = [u; v], nfac) where nfac counts K_eff factorizations.
+function genalpha_solve(
+    fint,
+    Kt,
+    M,
+    mass_solve,
+    u0,
+    v0,
+    T,
+    h;
+    rho_inf = 1.0,
+    t0 = 0.0,
+    callback = nothing,
+    progress = nothing,
+    C = nothing,
+    force = nothing,
+    params = nothing,
+)
     αm, αf, β, γ = params === nothing ? classical_gen_alpha(rho_inf) : params
     u, v = copy(u0), copy(v0)
     F0 = force === nothing ? zero(u) : force(float(t0))
@@ -52,7 +62,7 @@ function genalpha_solve(fint, Kt, M, mass_solve, u0, v0, T, h; rho_inf=1.0, t0=0
     cC = C === nothing ? 0.0 : (1 - αf) * γ * h
     callback !== nothing && callback(t, vcat(u, v))
     progress !== nothing && progress(0, nsteps, 0, t)
-    for istep in 1:nsteps
+    for istep = 1:nsteps
         @. q_pred = u + h * v + h^2 * (0.5 - β) * a
         @. v_pred = v + h * (1 - γ) * a
         copyto!(an, a)
@@ -61,7 +71,7 @@ function genalpha_solve(fint, Kt, M, mass_solve, u0, v0, T, h; rho_inf=1.0, t0=0
         Faf = force === nothing ? zero(u) : force(t_af)
         Rscale = max(norm(M * a), norm(Faf), 1.0)
         nnewt = 0
-        for _ in 1:30
+        for _ = 1:30
             nnewt += 1
             @. q_af = (1 - αf) * (q_pred + β * h^2 * a) + αf * u
             @. v_af = (1 - αf) * (v_pred + γ * h * a) + αf * v

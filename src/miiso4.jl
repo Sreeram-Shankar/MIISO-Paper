@@ -1,16 +1,7 @@
-"""
-MIISO4 — order-4 MIISO (exprb43 + narrow-taper modal φ_k).
-
-Same R blend as MIISO3 with R_C = Gauss (2,2) and R_D = Padé (0,4) repaired
-by (1,3) inside its instability wedge (|R_{0,4}(iw)|>1 on 0<|w|<√8).
-
-  Y2 = y + (h/2) φ₁(hJ/2) f + (h²/4) φ₂(hJ/2) f_t
-  D2 = f(t+h/2,Y2) − f − J(Y2−y) − (h/2) f_t
-  Y3 = y + h φ₁ f + h² φ₂ f_t
-  D3 = f(t+h,Y3) − f − J(Y3−y) − h f_t
-  y⁺ = y + h φ₁ f + h² φ₂ f_t + h (φ₃(w3) + φ₄(w4))
-  w3 = 16 D2 − 2 D3,   w4 = 12 (D3 − 4 D2)
-"""
+#MIISO4, Modal Integrator for Isogeometric Stabilization of Outliers (order 4).
+#the construction and methodi is described in the paper. The pade maps
+#are the [2,2] and [0,4] Pades. This method is rparied with the [1,3] Pade
+#inside its instability wedge (|R04(iw)| > 1 on 0 < |w| < sqrt(8)).
 
 include(joinpath(@__DIR__, "utilities.jl"))
 
@@ -41,16 +32,16 @@ function F04(x, y)
 end
 
 #finds where the 0/4 Pade crosses back into stability (|R04|=1) at height y, via bisection
-function instability_boundary(y; xlo=-0.5, n=2001)
+function instability_boundary(y; xlo = -0.5, n = 2001)
     y, ay = float(y), abs(float(y))
     (ay <= 0 || ay >= sqrt(8)) && return 0.0
-    xs = range(xlo, 0.0; length=n)
+    xs = range(xlo, 0.0; length = n)
     Fs = F04.(xs, y)
-    hits = findall(i -> signbit(Fs[i]) != signbit(Fs[i + 1]), 1:n-1)
+    hits = findall(i -> signbit(Fs[i]) != signbit(Fs[i+1]), 1:(n-1))
     isempty(hits) && return 0.0
     i = hits[end]
-    a, b = float(xs[i]), float(xs[i + 1])
-    for _ in 1:50
+    a, b = float(xs[i]), float(xs[i+1])
+    for _ = 1:50
         m = 0.5 * (a + b)
         a, b = float(F04(a, y)) * float(F04(m, y)) <= 0 ? (a, m) : (m, b)
     end
@@ -58,11 +49,11 @@ function instability_boundary(y; xlo=-0.5, n=2001)
 end
 
 #tabulate the boundary once before running the code
-const spaces = range(0.0, sqrt(8); length=1001)
+const spaces = range(0.0, sqrt(8); length = 1001)
 const boundarymap = [instability_boundary(y) for y in spaces]
 
 #blend weight 0->1 that switches from the 0/4 to the 1/3 Pade inside the 0/4 instability wedge
-function theta_wedge(z; pad=0.10)
+function theta_wedge(z; pad = 0.10)
     z = ComplexF64(z)
     x, y, ay = real(z), imag(z), abs(imag(z))
     y_max = (1 + pad) * sqrt(8)
@@ -91,24 +82,38 @@ function R_D(z)
     return blend_RD(R04(z), R13(z), th)
 end
 
+#warm the small-|z| Taylor series of R_C used by phi_blend
 rc_series(R_C)
 
 
-"""
-One exprb43 + nonautonomous MIISO4 step.
-
-Arguments match ``miiso2_step`` (cutoff / operators / krylov / taper).
-"""
-function miiso4_step(f, t, y, h; setup=nothing, k=nothing, Omega_c=nothing,
-                     J=nothing, ft=nothing, krylov_dim_max::Int=40, cutoff_adaptive=true,
-                     omega_frac=0.99, taper_order=4, ws=nothing, tau=1e-10)
-    y, fn, J, ft, oc, km = prepare(f, t, y, h; setup, k, Omega_c, J, ft, krylov_dim_max, cutoff_adaptive)
+#arguments match miiso2_step (cutoff / operators / krylov / taper) for a miiso4 step
+function miiso4_step(
+    f,
+    t,
+    y,
+    h;
+    setup = nothing,
+    k = nothing,
+    Omega_c = nothing,
+    J = nothing,
+    ft = nothing,
+    krylov_dim_max::Int = 40,
+    cutoff_adaptive = true,
+    omega_frac = 0.99,
+    taper_order = 4,
+    ws = nothing,
+    tau = 1e-10,
+)
+    y, fn, J, ft, oc, km =
+        prepare(f, t, y, h; setup, k, Omega_c, J, ft, krylov_dim_max, cutoff_adaptive)
     o0 = float(omega_frac) * oc
     n = length(y)
-    ws === nothing && (ws = (krylov_ws_new(n, clamp(km, 1, n)), krylov_ws_new(n, clamp(km, 1, n))))
+    ws === nothing &&
+        (ws = (krylov_ws_new(n, clamp(km, 1, n)), krylov_ws_new(n, clamp(km, 1, n))))
     foreach(reset_phi_pool!, ws)
     base = tau * (1 + norm(y))
-    ap(wsi, v, specs, tol) = apply_phi(wsi, J, v, h, o0, oc, km, R_C, R_D, specs, tol; p=taper_order)
+    ap(wsi, v, specs, tol) =
+        apply_phi(wsi, J, v, h, o0, oc, km, R_C, R_D, specs, tol; p = taper_order)
     if norm(ft) > 1e-30
         (phi1_f, phi1_f_half), (phi2_ft, phi2_ft_half) = parallel_pair(
             () -> ap(ws[1], fn, [(1, 1.0), (1, 0.5)], base / h),
@@ -125,10 +130,10 @@ function miiso4_step(f, t, y, h; setup=nothing, k=nothing, Omega_c=nothing,
     @. Y3 = y + h * phi1_f + h^2 * phi2_ft
     D2 = ensure!(ws[1].d2, n)
     D3 = ensure!(ws[1].d3, n)
-    # Sequential defects: f may use @threads :static (cannot nest under parallel_pair).
+    #sequential defects: f may use @threads :static (cannot nest under parallel_pair)
     defect!(D2, ws[1], f, t, 0.5, h, Y2, y, fn, ft, J)
     defect!(D3, ws[2], f, t, 1.0, h, Y3, y, fn, ft, J)
-    # (16φ3−48φ4)D2 + (−2φ3+12φ4)D3 = φ3(w3) + φ4(w4), and w4 = O(h³).
+    #(16 phi3 - 48 phi4) D2 + (-2 phi3 + 12 phi4) D3 = phi3(w3) + phi4(w4), and w4 = O(h^3).
     w3 = ensure!(ws[1].u3, n)
     w4 = ensure!(ws[1].u4, n)
     @. w3 = 16 * D2 - 2 * D3
@@ -154,10 +159,42 @@ function miiso4_step(f, t, y, h; setup=nothing, k=nothing, Omega_c=nothing,
 end
 
 
-"""Integrate y'=f from t0 to T. Arguments match ``miiso2_solve``."""
-function miiso4_solve(f, y0, T, h; t0=0.0, setup=nothing, k=nothing, Omega_c=nothing,
-                      J=nothing, ft=nothing, krylov_dim_max::Int=40, cutoff_adaptive=true,
-                      omega_frac=0.99, taper_order=4, tau=1e-10, callback=nothing)
-    miiso_solve(miiso4_step, f, y0, T, h; t0, setup, k, Omega_c, J, ft,
-                krylov_dim_max, cutoff_adaptive, omega_frac, taper_order, tau, callback)
+#integrate y'=f from t0 to T. arguments match miiso2_solve.
+function miiso4_solve(
+    f,
+    y0,
+    T,
+    h;
+    t0 = 0.0,
+    setup = nothing,
+    k = nothing,
+    Omega_c = nothing,
+    J = nothing,
+    ft = nothing,
+    krylov_dim_max::Int = 40,
+    cutoff_adaptive = true,
+    omega_frac = 0.99,
+    taper_order = 4,
+    tau = 1e-10,
+    callback = nothing,
+)
+    miiso_solve(
+        miiso4_step,
+        f,
+        y0,
+        T,
+        h;
+        t0,
+        setup,
+        k,
+        Omega_c,
+        J,
+        ft,
+        krylov_dim_max,
+        cutoff_adaptive,
+        omega_frac,
+        taper_order,
+        tau,
+        callback,
+    )
 end

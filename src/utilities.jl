@@ -3,8 +3,11 @@ using SparseArrays
 using Arpack
 using ForwardDiff
 
-# Same-module includes (no module barriers). Three pieces: operators, cutoff, krylov.
-# Include only one miisoN.jl per Julia module — each defines its own R_C / R_D / theta_wedge.
+#these three files are shared by every miiso method.
+#operators holds JVP and workspaces, cutoff holds the outlier
+#eigenpair cache, krylov holds Arnoldi and the phi actions.
+#only one miiso(N).jl should be included per Julia module, because
+#each one defines its own custom amplification maps.
 include(joinpath(@__DIR__, "operators.jl"))
 include(joinpath(@__DIR__, "cutoff.jl"))
 include(joinpath(@__DIR__, "krylov.jl"))

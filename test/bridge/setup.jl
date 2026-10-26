@@ -1,8 +1,4 @@
-# Continuum arch bridge — geometry, SVK physics, NURBS frame I/O, MIISO4.
-# Included by run.jl.
-#
-#   include("setup.jl")
-#   sys = arch_bridge_system(BridgeParams())
+# Arch bridge geometry, SVK, NURBS I/O. Included by run.jl.
 
 include(joinpath(@__DIR__, "..", "..", "src", "miiso4.jl"))
 
@@ -16,12 +12,12 @@ Base.@kwdef struct BridgeParams
     p::Int = 4
     nel::NTuple{3,Int} = (32, 6, 6)
     E::Float64 = 34e9
-    ν::Float64 = 0.2
-    ρ::Float64 = 2500.0
+    nu::Float64 = 0.2
+    rho::Float64 = 2500.0
     deck_mass::Float64 = 20e3
     ncol::Int = 11
     col_width::Float64 = 1.2
-    ζ::Float64 = 0.05
+    zeta::Float64 = 0.05
     f1::Float64 = 1.2
     f2::Float64 = 25.0
     g::Float64 = 9.81
@@ -33,21 +29,20 @@ Base.@kwdef struct BridgeParams
     duration::Float64 = 10.0
     scale::Float64 = 1.0
     seed::Int = 2024
-    record = nothing                          # (dt, ax, ay) or synthetic
+    record = nothing  
     jac_rtol::Float64 = 0.1
     jac_max_lag::Int = 50
 end
 
-# ---- mesh (1D refine then tensor product; FerriteIGA middle-dir knotinsertion is unsafe) ----
-
+# mesh: 1D refine then tensor product (FerriteIGA mid-dir knotinsertion is unsafe)
 function _refine_1d(cps::Vector{<:Vec}, ws::Vector{Float64}, kv::Vector{Float64}, order::Int, p_target::Int, nel::Int)
     cps, ws, kv = copy(cps), copy(ws), copy(kv)
     kvt = (kv,)
     while order < p_target
         order = orderelevation!(kvt, (order,), cps, ws; dir=1)[1]
     end
-    for ξ in range(0.0, 1.0; length=nel + 1)[2:end-1]
-        knotinsertion!(kvt, (order,), cps, ws, ξ; dir=1)
+    for xi in range(0.0, 1.0; length=nel + 1)[2:end-1]
+        knotinsertion!(kvt, (order,), cps, ws, xi; dir=1)
     end
     return cps, ws, kvt[1], order
 end
@@ -55,11 +50,11 @@ end
 function arch_rib_mesh(P::BridgeParams)
     (; L, f, d, b, p, nel) = P
     R = (L^2 / 4 + f^2) / (2f)
-    θ = asin(L / (2R))
+    theta = asin(L / (2R))
     yc = f - R
     rin, rout = R - d / 2, R + d / 2
-    a_cps = Vec{2,Float64}[Vec(-sin(θ), cos(θ)), Vec(0.0, 1 / cos(θ)), Vec(sin(θ), cos(θ))]
-    a_ws = Float64[1.0, cos(θ), 1.0]
+    a_cps = Vec{2,Float64}[Vec(-sin(theta), cos(theta)), Vec(0.0, 1 / cos(theta)), Vec(sin(theta), cos(theta))]
+    a_ws = Float64[1.0, cos(theta), 1.0]
     a_cps, a_ws, a_kv, oa = _refine_1d(a_cps, a_ws, Float64[0, 0, 0, 1, 1, 1], 2, p, nel[1])
     r_cps, _, r_kv, or_ = _refine_1d(Vec{1,Float64}[Vec(rin), Vec(rout)], ones(2), Float64[0, 0, 1, 1], 1, p, nel[2])
     z_cps, _, z_kv, oz = _refine_1d(Vec{1,Float64}[Vec(-b / 2), Vec(b / 2)], ones(2), Float64[0, 0, 1, 1], 1, p, nel[3])
@@ -69,15 +64,12 @@ function arch_rib_mesh(P::BridgeParams)
         push!(cps, Vec(r * a_cps[ia][1], yc + r * a_cps[ia][2], z_cps[iz][1]))
         push!(ws, a_ws[ia])
     end
-    return NURBSMesh((a_kv, r_kv, z_kv), (oa, or_, oz), cps, ws), (R=R, θ=θ, yc=yc, rin=rin, rout=rout)
+    return NURBSMesh((a_kv, r_kv, z_kv), (oa, or_, oz), cps, ws), (R=R, theta=theta, yc=yc, rin=rin, rout=rout)
 end
-
-# ---- 1D B-splines / mass operators (Kronecker M) ----
 
 function bsplines(kv::Vector{Float64}, p::Int, x::Float64)
     m = length(kv) - 1
     N = zeros(m)
-    x = clamp(x, kv[1], kv[end])
     for i in 1:m
         if kv[i] <= x < kv[i + 1] || (x == kv[end] && kv[i] < kv[i + 1] == kv[end])
             N[i] = 1.0
@@ -121,8 +113,8 @@ struct ArchDir
     kv::Vector{Float64}; p::Int; w::Vector{Float64}; P::Vector{NTuple{2,Float64}}
 end
 
-function arch_eval(A::ArchDir, ξ)
-    N, dN = bsplines(A.kv, A.p, ξ)
+function arch_eval(A::ArchDir, xi)
+    N, dN = bsplines(A.kv, A.p, xi)
     W = dot(A.w, N); dW = dot(A.w, dN)
     R = A.w .* N ./ W
     dR = A.w .* (dN .* W .- N .* dW) ./ W^2
@@ -137,21 +129,21 @@ function arch_operators(A::ArchDir; nq=A.p + 3)
     n = length(A.w)
     M = zeros(n, n); K = zeros(n, n); g = zeros(n)
     X, Wq = span_quadrature(A.kv, nq)
-    for (ξ, wq) in zip(X, Wq)
-        R, dR, s, _ = arch_eval(A, ξ)
+    for (xi, wq) in zip(X, Wq)
+        R, dR, s, _ = arch_eval(A, xi)
         M .+= (wq * s) .* (R * R'); K .+= (wq / s) .* (dR * dR'); g .+= (wq * s) .* R
     end
     return M, K, g
 end
 
-function line_operators(kv, p, x0, ℓ; weight=x -> 1.0, nq=p + 3)
+function line_operators(kv, p, x0, ell; weight=x -> 1.0, nq=p + 3)
     n = length(kv) - p - 1
     M = zeros(n, n); K = zeros(n, n); g = zeros(n)
     X, Wq = span_quadrature(kv, nq)
-    for (η, wq) in zip(X, Wq)
-        N, dN = bsplines(kv, p, η)
-        x = x0 + ℓ * η; ω = weight(x)
-        M .+= (wq * ℓ * ω) .* (N * N'); K .+= (wq * ω / ℓ) .* (dN * dN'); g .+= (wq * ℓ * ω) .* N
+    for (eta, wq) in zip(X, Wq)
+        N, dN = bsplines(kv, p, eta)
+        x = x0 + ell * eta; omega = weight(x)
+        M .+= (wq * ell * omega) .* (N * N'); K .+= (wq * omega / ell) .* (dN * dN'); g .+= (wq * ell * omega) .* N
     end
     return M, K, g
 end
@@ -164,7 +156,6 @@ function kron3(A1, A2, A3, X::Array{Float64,4})
     return permutedims(Y, (2, 3, 4, 1))
 end
 
-# In-place M⁻¹ via mode products; W1/W2 are (c,n1,n2,n3) work arrays.
 function kron3!(out::Array{Float64,4}, A1, A2, A3, X::Array{Float64,4},
                 W1::Array{Float64,4}, W2::Array{Float64,4})
     c, n1, n2, n3 = size(X)
@@ -180,7 +171,7 @@ function kron3!(out::Array{Float64,4}, A1, A2, A3, X::Array{Float64,4},
     return out
 end
 
-minv(S, r::AbstractVector) = vec(kron3(S.iMa, S.iMr, S.iMz, reshape(r, S.shape))) ./ S.ρeff
+minv(S, r::AbstractVector) = vec(kron3(S.iMa, S.iMr, S.iMz, reshape(r, S.shape))) ./ S.rho_eff
 
 function minv!(out::AbstractVector{Float64}, S, r::AbstractVector)
     tid = Threads.threadid()
@@ -189,13 +180,11 @@ function minv!(out::AbstractVector{Float64}, S, r::AbstractVector)
     X = reshape(w.x, S.shape)
     Y = reshape(out, S.shape)
     kron3!(Y, S.iMa, S.iMr, S.iMz, X, w.w1, w.w2)
-    @. out = out / S.ρeff
+    @. out = out / S.rho_eff
     return out
 end
 
-# ---- ground motion ----
-
-function synthetic_record(; dt=0.005, duration=10.0, pga=0.4, g=9.81, ωg=15.6, ζg=0.6,
+function synthetic_record(; dt=0.005, duration=10.0, pga=0.4, g=9.81, omega_g=15.6, zeta_g=0.6,
                           t1=1.5, t2=6.0, c=0.35, rng=Random.default_rng())
     nt = round(Int, duration / dt) + 1
     x = 0.0; v = 0.0; a = zeros(nt)
@@ -203,23 +192,23 @@ function synthetic_record(; dt=0.005, duration=10.0, pga=0.4, g=9.81, ωg=15.6, 
     for k in 1:nt
         for _ in 1:10
             w = randn(rng) / sqrt(h)
-            v += h * (-2ζg * ωg * v - ωg^2 * x - w)
+            v += h * (-2zeta_g * omega_g * v - omega_g^2 * x - w)
             x += h * v
         end
         t = (k - 1) * dt
         env = t < t1 ? (t / t1)^2 : t <= t2 ? 1.0 : exp(-c * (t - t2))
-        a[k] = -(2ζg * ωg * v + ωg^2 * x) * env
+        a[k] = -(2zeta_g * omega_g * v + omega_g^2 * x) * env
     end
     a .-= range(a[1], a[end]; length=nt)
     return a .* (pga * g / maximum(abs, a))
 end
 
 function interp_record(a::Vector{Float64}, dt, t)
-    τ = float(t) / dt
-    i = floor(Int, τ)
+    tau = float(t) / dt
+    i = floor(Int, tau)
     (i < 0 || i >= length(a) - 1) && return 0.0, 0.0
     s = a[i + 2] - a[i + 1]
-    return a[i + 1] + (τ - i) * s, s / dt
+    return a[i + 1] + (tau - i) * s, s / dt
 end
 
 function bisect(g, a, b; iters=80)
@@ -233,9 +222,7 @@ end
 
 kbar(p, bc::Symbol) = bc === :fixed ? (p - 1) ÷ 2 : p ÷ 2
 
-# ---- sparse J: [dq;dv] ↦ [dv; -M⁻¹(Kt dq + a1 K0 dv) - a0 dv] ----
-# Thread-local work (parallel Arnoldi / defects); returns reused out buffer.
-
+# sparse J: [dq;dv] -> [dv; -M^{-1}(Kt dq + a1 K0 dv) - a0 dv]
 mutable struct BridgeJOp
     Kt::SparseMatrixCSC{Float64,Int}
     K0::SparseMatrixCSC{Float64,Int}
@@ -305,7 +292,7 @@ function assemble_K!(Kt::SparseMatrixCSC, K0, S, U::AbstractVector{<:Real}, g2f;
     fill!(nonzeros(Kt), 0.0)
     aKt = start_assemble(Kt)
     aK0 = do_K0 ? (fill!(nonzeros(K0), 0.0); start_assemble(K0)) : nothing
-    λ, μ = S.λ, S.μ
+    lambda, mu = S.lambda, S.mu
     cv = S.cvs[1]; bc = S.bcs[1]
     w = S.aw
     ue, locf, remap = w.ue, w.locf, w.remap
@@ -326,24 +313,24 @@ function assemble_K!(Kt::SparseMatrixCSC, K0, S, U::AbstractVector{<:Real}, g2f;
             locf[li] = g2f[gi]
         end
         for q in 1:getnquadpoints(cv)
-            dΩ = getdetJdV(cv, q)
-            ∇u = function_gradient(cv, q, ue)
-            F = one(∇u) + ∇u
+            dOmega = getdetJdV(cv, q)
+            gradu = function_gradient(cv, q, ue)
+            F = one(gradu) + gradu
             E = symmetric(0.5 * (transpose(F) ⋅ F - one(F)))
-            Sv = λ * tr(E) * one(E) + 2μ * E
+            Sv = lambda * tr(E) * one(E) + 2mu * E
             for j in 1:nb
                 dF = shape_gradient(cv, q, j)
                 dE = symmetric(transpose(F) ⋅ dF)
-                dS = λ * tr(dE) * one(E) + 2μ * dE
+                dS = lambda * tr(dE) * one(E) + 2mu * dE
                 dP = dF ⋅ Sv + F ⋅ dS
                 for i in 1:nb
-                    Ke[i, j] += (dP ⊡ shape_gradient(cv, q, i)) * dΩ
+                    Ke[i, j] += (dP ⊡ shape_gradient(cv, q, i)) * dOmega
                 end
                 if do_K0
-                    εj = shape_symmetric_gradient(cv, q, j)
-                    σj = λ * tr(εj) * one(εj) + 2μ * εj
+                    epsj = shape_symmetric_gradient(cv, q, j)
+                    sigmaj = lambda * tr(epsj) * one(epsj) + 2mu * epsj
                     for i in 1:nb
-                        Ke0[i, j] += (σj ⊡ shape_gradient(cv, q, i)) * dΩ
+                        Ke0[i, j] += (sigmaj ⊡ shape_gradient(cv, q, i)) * dOmega
                     end
                 end
             end
@@ -372,10 +359,9 @@ function assemble_K!(Kt::SparseMatrixCSC, K0, S, U::AbstractVector{<:Real}, g2f;
     return Kt, K0
 end
 
-# Nonlinear SVK internal force. Thread-local buffers so all cells run in one parallel region
-# (Ferrite coloring only gives 4–8 cells/color on this mesh and kills scaling).
+# SVK fint; thread-local buffers (Ferrite coloring is too coarse here)
 function element_fint!(fint::Vector{Float64}, S, U::AbstractVector{Float64})
-    λ, μ = S.λ, S.μ
+    lambda, mu = S.lambda, S.mu
     ncells = getncells(S.grid)
     fbufs = S.fbufs
     for b in fbufs
@@ -397,14 +383,14 @@ function element_fint!(fint::Vector{Float64}, S, U::AbstractVector{Float64})
             ue[3(a - 1) + c] = U[gi]
         end
         for q in 1:getnquadpoints(cv)
-            dΩ = getdetJdV(cv, q)
-            ∇u = function_gradient(cv, q, ue)
-            F = one(∇u) + ∇u
+            dOmega = getdetJdV(cv, q)
+            gradu = function_gradient(cv, q, ue)
+            F = one(gradu) + gradu
             E = symmetric(0.5 * (transpose(F) ⋅ F - one(F)))
-            Sv = λ * tr(E) * one(E) + 2μ * E
+            Sv = lambda * tr(E) * one(E) + 2mu * E
             Pk = F ⋅ Sv
             for i in 1:nb
-                fe[i] += (Pk ⊡ shape_gradient(cv, q, i)) * dΩ
+                fe[i] += (Pk ⊡ shape_gradient(cv, q, i)) * dOmega
             end
         end
         @inbounds for a in eachindex(nodes), c in 1:3
@@ -419,10 +405,8 @@ function element_fint!(fint::Vector{Float64}, S, U::AbstractVector{Float64})
     return fint
 end
 
-# ---- system ----
-
 function arch_bridge_system(P::BridgeParams=BridgeParams())
-    (; p, E, ν, ρ, d, b, L, g) = P
+    (; p, E, nu, rho, d, b, L, g) = P
     mesh, geo = arch_rib_mesh(P)
     (; R, yc, rin, rout) = geo
     n1, n2, n3 = length.(mesh.knot_vectors) .- mesh.orders .- 1
@@ -436,7 +420,7 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
 
     fa = 2:n1-1
     Maf = Ma[fa, fa]
-    ρeff = ρ + P.deck_mass * L / (sum(ga) * sum(gr) * sum(gz))
+    rho_eff = rho + P.deck_mass * L / (sum(ga) * sum(gr) * sum(gz))
     iMa, iMr, iMz = inv(Symmetric(Maf)), inv(Symmetric(Mr)), inv(Symmetric(Mz))
 
     shape_full = (3, n1, n2, n3)
@@ -444,22 +428,22 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
     nf = length(free)
     shape = (3, length(fa), n2, n3)
     nth = Threads.maxthreadid()
-    Sm = (shape=shape, iMa=iMa, iMr=iMr, iMz=iMz, ρeff=ρeff,
+    Sm = (shape=shape, iMa=iMa, iMr=iMr, iMz=iMz, rho_eff=rho_eff,
           work=[(; x=zeros(nf), w1=zeros(shape), w2=zeros(shape)) for _ in 1:nth])
 
     Fg_full = zeros(shape_full)
-    Fg_full[2, :, :, :] .= -ρ * g .* reshape(kron(gz, kron(gr, ga)), n1, n2, n3)
+    Fg_full[2, :, :, :] .= -rho * g .* reshape(kron(gz, kron(gr, ga)), n1, n2, n3)
     Pcol = P.deck_mass * L * g / P.ncol
     for m in 1:P.ncol
         xc = -L / 2 + L * m / (P.ncol + 1)
-        φc = asin(xc / rout); Δφ = P.col_width / (2rout)
-        φ(ξ) = arch_eval(A, ξ)[4]
-        ξa = bisect(ξ -> φ(ξ) - (φc - Δφ), 0.0, 1.0)
-        ξb = bisect(ξ -> φ(ξ) - (φc + Δφ), 0.0, 1.0)
-        X, Wq = span_quadrature(A.kv, p + 3; lo=ξa, hi=ξb)
+        phi_c = asin(xc / rout); dphi = P.col_width / (2rout)
+        phi(xi) = arch_eval(A, xi)[4]
+        xia = bisect(xi -> phi(xi) - (phi_c - dphi), 0.0, 1.0)
+        xib = bisect(xi -> phi(xi) - (phi_c + dphi), 0.0, 1.0)
+        X, Wq = span_quadrature(A.kv, p + 3; lo=xia, hi=xib)
         fa_col = zeros(n1); arc = 0.0
-        for (ξ, wq) in zip(X, Wq)
-            Rb, _, s, _ = arch_eval(A, ξ)
+        for (xi, wq) in zip(X, Wq)
+            Rb, _, s, _ = arch_eval(A, xi)
             fa_col .+= (wq * s * rout) .* Rb; arc += wq * s * rout
         end
         Fg_full[2, :, n2, :] .-= (Pcol / (arc * b)) .* (fa_col * gz')
@@ -469,10 +453,10 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
     Mones_a = (Ma * ones(n1))[fa]
     rig = reshape(kron(Mz * ones(n3), kron(Mr * ones(n2), Mones_a)), length(fa), n2, n3)
     Xr = zeros(shape); Xr[1, :, :, :] .= rig
-    Sι = (shape=shape, iMa=iMa, iMr=iMr, iMz=iMz, ρeff=1.0)
-    ιx = minv(Sι, vec(Xr))
+    S_iota = (shape=shape, iMa=iMa, iMr=iMr, iMz=iMz, rho_eff=1.0)
+    iota_x = minv(S_iota, vec(Xr))
     Xr .= 0; Xr[2, :, :, :] .= rig
-    ιy = minv(Sι, vec(Xr))
+    iota_y = minv(S_iota, vec(Xr))
 
     rng = Random.MersenneTwister(P.seed)
     if P.record === nothing
@@ -484,25 +468,25 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
         ax = P.scale .* ax; ay = P.scale .* ay
     end
 
-    ω1, ω2 = 2π * P.f1, 2π * P.f2
-    a0 = 2P.ζ * ω1 * ω2 / (ω1 + ω2); a1 = 2P.ζ / (ω1 + ω2)
-    λ = E * ν / ((1 + ν) * (1 - 2ν)); μ = E / (2(1 + ν))
+    omega1, omega2 = 2pi * P.f1, 2pi * P.f2
+    a0 = 2P.zeta * omega1 * omega2 / (omega1 + omega2); a1 = 2P.zeta / (omega1 + omega2)
+    lambda = E * nu / ((1 + nu) * (1 - 2nu)); mu = E / (2(1 + nu))
 
-    # Hiemstra ω_c from 1D directional spectra (boundary eigenvalue per axis)
-    cs = sqrt(μ / ρeff)
+    # Hiemstra omega_c from 1D directional spectra
+    cs = sqrt(mu / rho_eff)
     Rm = (rin + rout) / 2
     la = sort(eigvals(Symmetric(Ka[fa, fa]), Symmetric(Maf))) ./ Rm^2
-    lr = sort(max.(eigvals(Symmetric(Kr), Symmetric(Mr)), 0.0))
-    lz = sort(max.(eigvals(Symmetric(Kz), Symmetric(Mz)), 0.0))
+    lr = sort(eigvals(Symmetric(Kr), Symmetric(Mr)))
+    lz = sort(eigvals(Symmetric(Kz), Symmetric(Mz)))
     kd = (kbar(p, :fixed) * 2, kbar(p, :free) * 2, kbar(p, :free) * 2)
     ls = (la, lr, lz)
-    λbdry = Float64[]
+    lambda_bdry = Float64[]
     for dd in 1:3
-        k = min(kd[dd], length(ls[dd])); k == 0 && continue
+        k = min(kd[dd], length(ls[dd]))
         i = length(ls[dd]) - k + 1
-        push!(λbdry, ls[dd][i] + sum(ls[e][1] for e in 1:3 if e != dd))
+        push!(lambda_bdry, ls[dd][i] + sum(ls[e][1] for e in 1:3 if e != dd))
     end
-    omega_c = cs * sqrt(isempty(λbdry) ? (la[end] + lr[end] + lz[end]) : minimum(λbdry))
+    omega_c = cs * sqrt(minimum(lambda_bdry))
 
     grid = BezierGrid(mesh)
     ip = IGAInterpolation{RefHexahedron, p}()^3
@@ -517,7 +501,7 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
     aw = (; ue=zeros(nb0), locf=zeros(Int, nb0), remap=zeros(Int, nb0),
           Ke=zeros(nb0, nb0), Ke0=zeros(nb0, nb0),
           fdofs=zeros(Int, nb0), Kef=zeros(nb0, nb0), Ke0f=zeros(nb0, nb0))
-    asm = (; grid, cvs, bcs, colors, nnodes, free, nf, λ, μ, tls, aw, fbufs)
+    asm = (; grid, cvs, bcs, colors, nnodes, free, nf, lambda, mu, tls, aw, fbufs)
 
     gfac(t) = !P.gravity ? 0.0 : t >= P.t_ramp ? 1.0 : (s = t / P.t_ramp; 3s^2 - 2s^3)
     dgfac(t) = !P.gravity ? 0.0 : t >= P.t_ramp ? 0.0 : (s = t / P.t_ramp; 6s * (1 - s) / P.t_ramp)
@@ -527,7 +511,6 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
     assemble_K!(Kpat, K0, asm, zeros(3nnodes), g2f; do_K0=true)
     Kt = Kpat
 
-    # Reused f buffers (MIISO copies fn/ft; defects are sequential in miiso4).
     U = zeros(3nnodes)
     fint_buf = zeros(3nnodes)
     k0v_free = zeros(nf)
@@ -545,7 +528,7 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
         ayg = interp_record(ay, dt_rec, t - P.t_eq)[1]
         @inbounds for i in 1:nf
             yout[i] = y[nf + i]
-            yout[nf + i] = accbuf[i] - a0 * y[nf + i] - ιx[i] * axg - ιy[i] * ayg
+            yout[nf + i] = accbuf[i] - a0 * y[nf + i] - iota_x[i] * axg - iota_y[i] * ayg
         end
         return yout
     end
@@ -557,7 +540,7 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
         dg = dgfac(t)
         @inbounds for i in 1:nf
             ftout[i] = 0.0
-            ftout[nf + i] = dg * MinvFg[i] - ιx[i] * sx - ιy[i] * sy
+            ftout[nf + i] = dg * MinvFg[i] - iota_x[i] * sx - iota_y[i] * sy
         end
         return ftout
     end
@@ -575,7 +558,7 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
         else
             s = 0.0
             @inbounds for i in eachindex(q)
-                δ = q[i] - q_J[i]; s += δ * δ
+                delta = q[i] - q_J[i]; s += delta * delta
             end
             sqrt(s) / (1 + norm(q))
         end
@@ -591,15 +574,14 @@ function arch_bridge_system(P::BridgeParams=BridgeParams())
     return (f=f, ft=ft, J=J, y0=zeros(2nf), omega_c=omega_c, nfree=nf, nrebuild=nrebuild,
             mesh=mesh, free=free, n1=n1, n2=n2, n3=n3,
             Sm=Sm, asm=asm, Fg=Fg, a0=a0, a1=a1, g2f=g2f, Kt=Kt, K0=K0,
-            ιx=ιx, ιy=ιy, ax=ax, ay=ay, dt_rec=dt_rec, P=P, gfac=gfac)
+            iota_x=iota_x, iota_y=iota_y, ax=ax, ay=ay, dt_rec=dt_rec, P=P, gfac=gfac)
 end
 
-# ── NURBS eval / frame I/O (no Ferrite) ───────────────────────────────────────
-function nurbs_point(kv, orders, cps::AbstractMatrix, ws, ξ, η, ζ, Ucp)
+function nurbs_point(kv, orders, cps::AbstractMatrix, ws, xi, eta, zeta, Ucp)
     n1, n2, n3 = length.(kv) .- orders .- 1
-    Na, _ = bsplines(kv[1], orders[1], ξ)
-    Nr, _ = bsplines(kv[2], orders[2], η)
-    Nz, _ = bsplines(kv[3], orders[3], ζ)
+    Na, _ = bsplines(kv[1], orders[1], xi)
+    Nr, _ = bsplines(kv[2], orders[2], eta)
+    Nz, _ = bsplines(kv[3], orders[3], zeta)
     W = 0.0
     x = y = z = ux = uy = uz = 0.0
     @inbounds for iz in 1:n3, ir in 1:n2, ia in 1:n1
@@ -626,26 +608,3 @@ function cps_matrix(control_points)
 end
 
 make_U_workspace(n1, n2, n3) = (Ucp = zeros(3, n1, n2, n3); (Ucp, reshape(Ucp, :)))
-
-function pack_meta(; T, h, dt_save, n1, n2, n3, nf, free, omega_c,
-                   ξs, ζs, η_top, η_bot, kv, orders, cps_mat, ws,
-                   nel, t_ramp, t_eq, jac_rtol, jac_max_lag, krylov_dim_max)
-    (; T=Float64(T), h=Float64(h), dt_save=Float64(dt_save),
-     n1=Int(n1), n2=Int(n2), n3=Int(n3), nf=Int(nf),
-     free=Vector{Int}(free), omega_c=Float64(omega_c),
-     ξs=Vector{Float64}(ξs), ζs=Vector{Float64}(ζs),
-     η_top=Float64(η_top), η_bot=Float64(η_bot),
-     kv=map(v -> Vector{Float64}(v), kv), orders=Tuple(Int.(orders)),
-     cps=Matrix{Float64}(cps_mat), ws=Vector{Float64}(ws),
-     nel=Tuple{Int,Int,Int}(nel), t_ramp=Float64(t_ramp), t_eq=Float64(t_eq),
-     jac_rtol=Float64(jac_rtol), jac_max_lag=Int(jac_max_lag),
-     krylov_dim_max=Int(krylov_dim_max))
-end
-
-function write_f64(path, A::Array{Float64})
-    open(path, "w") do io
-        write(io, Int64(ndims(A)))
-        for d in size(A); write(io, Int64(d)); end
-        write(io, A)
-    end
-end

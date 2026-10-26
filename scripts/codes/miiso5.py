@@ -1,12 +1,7 @@
-"""Rudimentary MIISO5 amplification maps (R_C / R_D / R_blend only).
-
-R_C = Gauss (3,3). R_D = Padé (0,5) repaired by (2,3) on the 0/5
-instability band (≈ 1.862 < |Im z| < 3.396 on the imaginary axis).
-"""
-
+# MIISO5 maps used by fig scripts. It is the same as the julia proper src files but is an older, python version.
 import numpy as np
 
-# Gauss / conservative 6th-order 3/3 diagonal Padé
+#Gauss (3,3) conservative
 def R_C(z):
     z = complex(z)
     return (1 + z / 2 + z ** 2 / 10 + z ** 3 / 120) / (

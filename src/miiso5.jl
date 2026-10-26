@@ -1,22 +1,7 @@
-"""
-MIISO5 — order-5 MIISO (pexprb54s5 of Luan & Ostermann 2016 + narrow-taper modal φ_k).
-
-R_C = Gauss (3,3). R_D = Padé (0,5) repaired by (2,3) (3-stage Radau IIA) on the
-0/5 instability region (a band on the imaginary axis, 1.862 < |w| < 3.396).
-
-Nodes c2 = c3 = 1/2, c4 = 1/3, c5 = 1. With U_i = y + c_i h φ₁(c_i hJ) f + c_i² h² φ₂(c_i hJ) f_t + h Σ a_ij D_j:
-
-  U2 = y + (h/2) φ₁(hJ/2) f + (h²/4) φ₂(hJ/2) f_t
-  D2 = f(t+h/2,U2) − f − J(U2−y) − (h/2) f_t
-  U3 = U2 + (h/2) φ₃(hJ/2) D2
-  U4 = y + (h/3) φ₁(hJ/3) f + (h²/9) φ₂(hJ/3) f_t + (8h/27) φ₃(hJ/3) D2
-  U5 = y + h φ₁ f + h² φ₂ f_t + 8h φ₃ D2
-  D_i = f(t+c_i h,U_i) − f − J(U_i−y) − c_i h f_t,   i = 3, 4, 5   (in parallel)
-  y⁺ = y + h φ₁ f + h² φ₂ f_t + h (φ₃ w3 + φ₄ w4 + φ₅ w5)
-  w3 = −32 D3 + 81 D4 + D5,  w4 = 384 D3 − 729 D4 − 15 D5,  w5 = −1152 D3 + 1944 D4 + 72 D5
-
-Needs three Krylov workspaces (`n_ws=3` in miiso_solve).
-"""
+#MIISO5, Modal Integrator for Isogeometric Stabilization of Outliers (order 5).
+#the construction and methodi is described in the paper. The pade maps
+#are the [3,3] and [0,5] Pades. This method is rparied with the [2,3] Pade
+#on the 0/5 instability region (a band on the imaginary axis, 1.862 < |w| < 3.396 approximately).
 
 include(joinpath(@__DIR__, "utilities.jl"))
 
@@ -46,29 +31,29 @@ F05(z) = abs(1 - z + z^2/2 - z^3/6 + z^4/24 - z^5/120)^2 - 1
 #imaginary-axis crossings of the 0/5 instability band: roots of w^4 - 15w^2 + 40
 const y_lo = sqrt((15 - sqrt(65)) / 2)   # ≈ 1.8625
 const y_hi = sqrt((15 + sqrt(65)) / 2)   # ≈ 3.3958
-const y_c  = (y_lo + y_hi) / 2           # the region is star-shaped about i*y_c
-const c05  = ComplexF64(0, y_c)
+const y_c = (y_lo + y_hi) / 2           # the region is star-shaped about i*y_c
+const c05 = ComplexF64(0, y_c)
 
 #distance from c05 to the 0/5 stability boundary along direction α ∈ [π/2, 3π/2], via bisection
-function ray_boundary(α; rmax=1.5, n=3001)
+function ray_boundary(α; rmax = 1.5, n = 3001)
     d = cis(α)
-    rs = range(0.0, rmax; length=n)
+    rs = range(0.0, rmax; length = n)
     Fs = [F05(c05 + r * d) for r in rs]
-    i = findfirst(j -> Fs[j] < 0 && Fs[j + 1] >= 0, 1:n-1)
+    i = findfirst(j -> Fs[j] < 0 && Fs[j+1] >= 0, 1:(n-1))
     i === nothing && return 0.0
-    a, b = float(rs[i]), float(rs[i + 1])
-    for _ in 1:50
+    a, b = float(rs[i]), float(rs[i+1])
+    for _ = 1:50
         m = 0.5 * (a + b)
         F05(c05 + m * d) < 0 ? (a = m) : (b = m)
     end
     return 0.5 * (a + b)
 end
 
-const angles = range(π/2, 3π/2; length=2001)
+const angles = range(π/2, 3π/2; length = 2001)
 const raymap = [ray_boundary(α) for α in angles]
 
 #blend weight 0->1: 0/5 → 2/3 on the instability region. Radial 10% pad about i*y_c, mirrored in y.
-function theta_wedge(z; pad=0.10)
+function theta_wedge(z; pad = 0.10)
     z = ComplexF64(z)
     x, ay = min(real(z), 0.0), abs(imag(z))
     d = ComplexF64(x, ay) - c05
@@ -91,14 +76,30 @@ function R_D(z)
     return blend_RD(R05(z), R23(z), th)
 end
 
+#warm the small-|z| Taylor series of R_C used by phi_blend
 rc_series(R_C)
 
 
-"""One pexprb54s5 + nonautonomous MIISO5 step. Needs `length(ws) ≥ 3`."""
-function miiso5_step(f, t, y, h; setup=nothing, k=nothing, Omega_c=nothing,
-                     J=nothing, ft=nothing, krylov_dim_max::Int=40, cutoff_adaptive=true,
-                     omega_frac=0.99, taper_order=4, ws=nothing, tau=1e-10)
-    y, fn, J, ft, oc, km = prepare(f, t, y, h; setup, k, Omega_c, J, ft, krylov_dim_max, cutoff_adaptive)
+#one pexprb54s5 + nonautonomous MIISO5 step. needs length(ws) >= 3
+function miiso5_step(
+    f,
+    t,
+    y,
+    h;
+    setup = nothing,
+    k = nothing,
+    Omega_c = nothing,
+    J = nothing,
+    ft = nothing,
+    krylov_dim_max::Int = 40,
+    cutoff_adaptive = true,
+    omega_frac = 0.99,
+    taper_order = 4,
+    ws = nothing,
+    tau = 1e-10,
+)
+    y, fn, J, ft, oc, km =
+        prepare(f, t, y, h; setup, k, Omega_c, J, ft, krylov_dim_max, cutoff_adaptive)
     o0 = float(omega_frac) * oc
     n = length(y)
     m = clamp(km, 1, n)
@@ -106,10 +107,11 @@ function miiso5_step(f, t, y, h; setup=nothing, k=nothing, Omega_c=nothing,
     foreach(reset_phi_pool!, ws)
     base = tau * (1 + norm(y))
     thr = 1e-14 * (1 + norm(fn))
-    ap(wsi, v, specs, tol) = apply_phi(wsi, J, v, h, o0, oc, km, R_C, R_D, specs, tol; p=taper_order)
+    ap(wsi, v, specs, tol) =
+        apply_phi(wsi, J, v, h, o0, oc, km, R_C, R_D, specs, tol; p = taper_order)
     zero_n(wsi) = fill!(ensure!(wsi.z0, n), 0.0)
 
-    #φ₁, φ₂ at c ∈ {1, 1/2, 1/3}
+    #phi1, phi2 at c in {1, 1/2, 1/3}
     if norm(ft) > 1e-30
         (p1, p1h, p1t), (p2, p2h, p2t) = parallel_pair(
             () -> ap(ws[1], fn, [(1, 1.0), (1, 0.5), (1, 1/3)], base / h),
@@ -125,7 +127,7 @@ function miiso5_step(f, t, y, h; setup=nothing, k=nothing, Omega_c=nothing,
     D2 = ensure!(ws[1].d2, n)
     defect!(D2, ws[1], f, t, 0.5, h, U2, y, fn, ft, J)
 
-    #φ₃(c hJ) D2 at c ∈ {1/2, 1/3, 1}
+    #phi3(c hJ) D2 at c in {1/2, 1/3, 1}
     if norm(D2) > thr
         p3h, p3t, p3 = ap(ws[1], D2, [(3, 0.5), (3, 1/3), (3, 1.0)], base / (8h))
     else
@@ -157,10 +159,43 @@ function miiso5_step(f, t, y, h; setup=nothing, k=nothing, Omega_c=nothing,
 end
 
 
-"""Integrate y'=f from t0 to T."""
-function miiso5_solve(f, y0, T, h; t0=0.0, setup=nothing, k=nothing, Omega_c=nothing,
-                      J=nothing, ft=nothing, krylov_dim_max::Int=40, cutoff_adaptive=true,
-                      omega_frac=0.99, taper_order=4, tau=1e-10, callback=nothing)
-    miiso_solve(miiso5_step, f, y0, T, h; t0, setup, k, Omega_c, J, ft,
-                krylov_dim_max, cutoff_adaptive, omega_frac, taper_order, tau, n_ws=3, callback)
+#integrate y'=f from t0 to T.
+function miiso5_solve(
+    f,
+    y0,
+    T,
+    h;
+    t0 = 0.0,
+    setup = nothing,
+    k = nothing,
+    Omega_c = nothing,
+    J = nothing,
+    ft = nothing,
+    krylov_dim_max::Int = 40,
+    cutoff_adaptive = true,
+    omega_frac = 0.99,
+    taper_order = 4,
+    tau = 1e-10,
+    callback = nothing,
+)
+    miiso_solve(
+        miiso5_step,
+        f,
+        y0,
+        T,
+        h;
+        t0,
+        setup,
+        k,
+        Omega_c,
+        J,
+        ft,
+        krylov_dim_max,
+        cutoff_adaptive,
+        omega_frac,
+        taper_order,
+        tau,
+        n_ws = 3,
+        callback,
+    )
 end

@@ -1,21 +1,34 @@
-#Hiemstra outlier count from IGA setup (problem, bc, p[, dim, n])
+#The outlier count (we call it k) from an IGA setup tuple
+#(problem, bc, p) for 1d, or (problem, bc, p, dim, n) for tensor product.
+#returns how many spectrum outliers sit above the physical band
 function outlier_count(setup)
     problem, bc, p = setup[1], setup[2], Int(setup[3])
 
     function end_k(bci)
         if problem == "bar"
-            if bci == "fixed"; return (p - 1) ÷ 2; end
-            if bci == "free"; return p ÷ 2; end
+            if bci == "fixed"
+                return (p - 1) ÷ 2
+            end
+            if bci == "free"
+                return p ÷ 2
+            end
         elseif problem == "beam"
-            if bci == "fixed"; return max((p - 2) ÷ 2, 0); end
-            if bci == "pinned"; return (p - 1) ÷ 2; end
-            if bci == "free"; return p ÷ 2; end
+            if bci == "fixed"
+                return max((p - 2) ÷ 2, 0)
+            end
+            if bci == "pinned"
+                return (p - 1) ÷ 2
+            end
+            if bci == "free"
+                return p ÷ 2
+            end
         end
         error("unknown problem/bc: $(repr(problem)), $(repr(bci))")
     end
 
     function axis_k(bci)
-        left, right = bci isa Tuple || bci isa AbstractVector ? (bci[1], bci[2]) : (bci, bci)
+        left, right =
+            bci isa Tuple || bci isa AbstractVector ? (bci[1], bci[2]) : (bci, bci)
         return end_k(left) + end_k(right)
     end
 
@@ -30,9 +43,11 @@ function outlier_count(setup)
     end
     return N - Nhat
 end
-#apply J to a vector, handling dense/sparse/operator/callable forms
+
+#thin wrapper so Arpack eigs can take a matrix-free operator.
+#f is the matvec, n is the dimension
 struct MatvecOp
-    f
+    f::Any
     n::Int
 end
 Base.size(A::MatvecOp) = (A.n, A.n)
@@ -40,17 +55,18 @@ Base.size(A::MatvecOp, ::Int) = A.n
 Base.eltype(::MatvecOp) = Float64
 LinearAlgebra.issymmetric(::MatvecOp) = false
 Base.:*(A::MatvecOp, x::AbstractVector) = A.f(x)
-LinearAlgebra.mul!(y::AbstractVector, A::MatvecOp, x::AbstractVector) = (copyto!(y, A.f(x)); y)
+LinearAlgebra.mul!(y::AbstractVector, A::MatvecOp, x::AbstractVector) =
+    (copyto!(y, A.f(x)); y)
 asvec(v::Vector{Float64}) = v
 asvec(v) = vec(Float64.(v))
 matvec(J::AbstractMatrix, v) = J * asvec(v)
 matvec(J::MatvecOp, v) = J * asvec(v)
 matvec(J, v) = J(asvec(v))
 
-#Jacobian-vector product when the user does not pass J. One dual evaluation of f, not a dense Jacobian.
-#The dual buffer lives on the branch workspace: a spawned task does not see the parent's storage.
+#Jacobian-vector product when the user does not pass J.
+#f is the rhs, t and y are the linearization point
 struct JacVec
-    f
+    f::Any
     t::Float64
     y::Vector{Float64}
 end
@@ -62,6 +78,7 @@ end
 
 const JVPDual = ForwardDiff.Dual{ForwardDiff.Tag{JacVec,Float64},Float64,1}
 
+#writes J*x into w using one ForwardDiff dual sweep through f
 function jvp!(w, J::JacVec, x, yd)
     y = J.y
     @inbounds for i in eachindex(y)
@@ -74,8 +91,15 @@ function jvp!(w, J::JacVec, x, yd)
     return w
 end
 
-#One workspace per parallel branch, allocated in miiso_solve and passed in.
-#phi_pool: bump-allocated φ-action outputs for one step (reset with reset_phi_pool!).
+#one workspace per parallel branch, allocated in miiso_solve and passed in.
+#V and H are the Arnoldi basis and Hessenberg matrix.
+#w, hcol, tmp are scratch for matvecs and projections.
+#yd is the ForwardDiff dual buffer for JacVec.
+#Yp is the column-chunk scratch for threaded sparse mul_hJ!.
+#dy, y2, y3, d2, d3, u3, u4, z0 are stage / defect / combo buffers
+#reused by miiso3–6 so they do not allocate every step.
+#phi_pool is a bump allocator for phi-action outputs in one step
+#(reset with reset_phi_pool!)
 mutable struct KrylovWS
     V::Matrix{Float64}
     H::Matrix{Float64}
@@ -96,23 +120,43 @@ mutable struct KrylovWS
     phi_npool::Int
 end
 
+#allocate a fresh Krylov workspace for state size n and Arnoldi cap m
 function krylov_ws_new(n::Int, m::Int)
     m = max(Int(m), 1)
-    return KrylovWS(zeros(n, m), zeros(m, m), zeros(n), zeros(m), zeros(n), Vector{JVPDual}(undef, n), zeros(n, 0),
-                    Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[],
-                    Vector{Float64}[], 0)
+    return KrylovWS(
+        zeros(n, m),
+        zeros(m, m),
+        zeros(n),
+        zeros(m),
+        zeros(n),
+        Vector{JVPDual}(undef, n),
+        zeros(n, 0),
+        Float64[],
+        Float64[],
+        Float64[],
+        Float64[],
+        Float64[],
+        Float64[],
+        Float64[],
+        Float64[],
+        Vector{Float64}[],
+        0,
+    )
 end
 
+#resize a Float64 buffer in place if needed
 function ensure!(v::Vector{Float64}, n::Int)
     length(v) == n || resize!(v, n)
     return v
 end
 
+#start a new step's phi bump allocation from the front of the pool
 function reset_phi_pool!(ws::KrylovWS)
     ws.phi_npool = 0
     return ws
 end
 
+#hand out the next phi-output vector of length n from the bump pool
 function take_phi_out!(ws::KrylovWS, n::Int)
     ws.phi_npool += 1
     if ws.phi_npool > length(ws.phi_pool)
@@ -121,7 +165,7 @@ function take_phi_out!(ws::KrylovWS, n::Int)
     return ensure!(ws.phi_pool[ws.phi_npool], n)
 end
 
-#D = f(t + c h, U) − f − J(U − y) − c h f_t
+#stage defect D = f(t + c h, U) - f - J(U - y) - c h f_t
 function defect!(D, wsi, f, t, c, h, U, y, fn, ft, J)
     dU = ensure!(wsi.dy, length(y))
     @. dU = U - y
@@ -133,6 +177,7 @@ function defect!(D, wsi, f, t, c, h, U, y, fn, ft, J)
     return D
 end
 
+#apply J to x into w for various forms and callable thingsies
 function apply_J!(w, J::JacVec, x, yd)
     jvp!(w, J, asvec(x), yd)
     return w
@@ -146,7 +191,7 @@ function apply_J!(w, J, x, yd)
     return w
 end
 
-#Run two independent pieces at once. Split the BLAS threads across them.
+#run two independent pieces at once. split the BLAS threads across them
 function parallel_pair(f, g)
     Threads.nthreads() < 2 && return f(), g()
     old = BLAS.get_num_threads()
@@ -160,7 +205,7 @@ function parallel_pair(f, g)
     end
 end
 
-#Same idea for any number of independent pieces (MIISO5 stages / φ-actions).
+#same idea for any number of independent pieces (MIISO5 stages / phi-actions)
 function parallel_n(fs...)
     Threads.nthreads() < 2 && return map(g -> g(), fs)
     old = BLAS.get_num_threads()
@@ -173,13 +218,14 @@ function parallel_n(fs...)
     end
 end
 
+#w = h * J * x for dense matrices
 function mul_hJ!(w, J::AbstractMatrix, x, h, ws::KrylovWS)
     mul!(w, J, x)
     rmul!(w, h)
     return w
 end
-#Column-wise product into private columns of Yp, then a sum. Worth threading only
-#when there is a lot of work per row; a long skinny matrix is faster in serial.
+#column-wise product into private columns of Yp, then a sum.
+#worth threading only when there is a lot of work per row
 function mul_hJ!(w, J::SparseMatrixCSC, x, h, ws::KrylovWS)
     nt = Threads.nthreads()
     nnzJ = nnz(J)
@@ -193,15 +239,15 @@ function mul_hJ!(w, J::SparseMatrixCSC, x, h, ws::KrylovWS)
         colptr, rowval, nzval = J.colptr, J.rowval, J.nzval
         ncols = size(J, 2)
         tasks = Vector{Task}(undef, nt)
-        for t in 1:nt
+        for t = 1:nt
             j0 = 1 + (t - 1) * ncols ÷ nt
             j1 = t * ncols ÷ nt
             tasks[t] = Threads.@spawn begin
                 yt = @view ws.Yp[:, t]
                 fill!(yt, 0)
-                @inbounds for j in j0:j1
+                @inbounds for j = j0:j1
                     xj = x[j]
-                    for p in colptr[j]:colptr[j + 1] - 1
+                    for p = colptr[j]:(colptr[j+1]-1)
                         yt[rowval[p]] += nzval[p] * xj
                     end
                 end
@@ -209,7 +255,7 @@ function mul_hJ!(w, J::SparseMatrixCSC, x, h, ws::KrylovWS)
         end
         foreach(wait, tasks)
         copyto!(w, @view ws.Yp[:, 1])
-        for t in 2:nt
+        for t = 2:nt
             @inbounds for i in eachindex(w)
                 w[i] += ws.Yp[i, t]
             end
@@ -236,7 +282,7 @@ function mul_hJ!(w, J, x, h, ws::KrylovWS)
     return w
 end
 
-
+#wrap whatever J the user gave into something Arpack can matvec
 function as_matvec(J, n)
     if J isa AbstractMatrix
         return J
