@@ -28,13 +28,13 @@ end
 #negative inside the 0/5 instability region
 F05(z) = abs(1 - z + z^2/2 - z^3/6 + z^4/24 - z^5/120)^2 - 1
 
-#imaginary-axis crossings of the 0/5 instability band: roots of w^4 - 15w^2 + 40
+#imaginary-axis crossings of the 0/5 instability band, roots of w^4 - 15w^2 + 40
 const y_lo = sqrt((15 - sqrt(65)) / 2)   # ≈ 1.8625
 const y_hi = sqrt((15 + sqrt(65)) / 2)   # ≈ 3.3958
 const y_c = (y_lo + y_hi) / 2           # the region is star-shaped about i*y_c
 const c05 = ComplexF64(0, y_c)
 
-#distance from c05 to the 0/5 stability boundary along direction α ∈ [π/2, 3π/2], via bisection
+#distance from c05 to the 0/5 stability boundary along direction alpha in [π/2, 3π/2] via bisection
 function ray_boundary(α; rmax = 1.5, n = 3001)
     d = cis(α)
     rs = range(0.0, rmax; length = n)
@@ -49,10 +49,13 @@ function ray_boundary(α; rmax = 1.5, n = 3001)
     return 0.5 * (a + b)
 end
 
+#save the boundary closed geometry once before running the code
 const angles = range(π/2, 3π/2; length = 2001)
 const raymap = [ray_boundary(α) for α in angles]
 
-#blend weight 0->1: 0/5 → 2/3 on the instability region. Radial 10% pad about i*y_c, mirrored in y.
+#the blend weight goes from0 to 1 to go from 0/5 to 2/3 on the instability region
+#since it does not touch the imaginary axis, we mirror in the y-direction
+#and add a 10% pad about i*y_c. it is also a radial blend
 function theta_wedge(z; pad = 0.10)
     z = ComplexF64(z)
     x, ay = min(real(z), 0.0), abs(imag(z))

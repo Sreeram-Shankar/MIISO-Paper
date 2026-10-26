@@ -17,7 +17,7 @@ end
 Q06(z) = 1 - z + z^2/2 - z^3/6 + z^4/24 - z^5/120 + z^6/720
 Q05(z) = 1 - z + z^2/2 - z^3/6 + z^4/24 - z^5/120        # Q06'(z) = -Q05(z)
 
-#highly dissipative 6th order 0/6 Pade (not A-stable: pole in the LHP)
+#highly dissipative 6th order 0/6 Pade
 function R06(z)
     z = ComplexF64(z)
     return 1 / Q06(z)
@@ -29,10 +29,10 @@ function R24(z)
     return (1 + z/3 + z^2/30) / (1 - 2z/3 + z^2/5 - z^3/30 + z^4/360)
 end
 
-#negative inside the 0/6 instability islands
+#this indicator is negative inside the 0/6 instability islands
 F06(z) = abs(Q06(z))^2 - 1
 
-#upper-half-plane LHP pole of R06, by Newton on Q06; the island is star-shaped about it
+#upper-half-plane LHP pole of R06, by Newton on Q06, then there is an island around it
 function pole06(z0 = ComplexF64(-0.8, 3.7))
     z = z0
     for _ = 1:50
@@ -44,7 +44,7 @@ function pole06(z0 = ComplexF64(-0.8, 3.7))
 end
 const p06 = pole06()     # ≈ -0.8036 + 3.6977i
 
-#distance from p06 to the 0/6 stability boundary along direction α ∈ [0, 2π], via bisection
+#distance from p06 to the 0/6 stability boundary along direction alpha in [0, 2π] via bisection
 function ray_boundary(α; rmax = 1.0, n = 4001)
     d = cis(α)
     rs = range(0.0, rmax; length = n)
@@ -59,12 +59,11 @@ function ray_boundary(α; rmax = 1.0, n = 4001)
     return 0.5 * (a + b)
 end
 
-#tabulate the boundary once before running the code (full circle, endpoints coincide)
+#save the boundary closed geometry once before running the code (full circle, endpoints coincide)
 const angles = range(0.0, 2π; length = 2001)
 const raymap = [ray_boundary(α) for α in angles]
 
-#blend weight 0->1 that switches from the 0/6 to the 2/4 Pade on the 0/6 instability islands.
-#Full 10% radial pad about the pole, mirrored in y. The pad stays in Re z < -0.45.
+#blend weight that switches from the 0/6 to the 2/4 Pade on the instability islands
 function theta_wedge(z; pad = 0.10)
     z = ComplexF64(z)
     d = ComplexF64(real(z), abs(imag(z))) - p06
@@ -77,7 +76,7 @@ function theta_wedge(z; pad = 0.10)
     return (1 + pad - s) / pad
 end
 
-#dissipative branch: 0/6 Pade repaired by the 2/4 Pade where it is unstable
+#dissipative branch is 0/6 Pade repaired by the 2/4 Pade where it is unstable
 function R_D(z)
     z = ComplexF64(z)
     th = theta_wedge(z)

@@ -48,11 +48,11 @@ function instability_boundary(y; xlo = -0.5, n = 2001)
     return 0.5 * (a + b)
 end
 
-#tabulate the boundary once before running the code
+#save the boundary for the instability repair once before running the code
 const spaces = range(0.0, sqrt(8); length = 1001)
 const boundarymap = [instability_boundary(y) for y in spaces]
 
-#blend weight 0->1 that switches from the 0/4 to the 1/3 Pade inside the 0/4 instability wedge
+#blend weight that switches from the 0/4 to the 1/3 Pade inside the 0/4 instability wedge
 function theta_wedge(z; pad = 0.10)
     z = ComplexF64(z)
     x, y, ay = real(z), imag(z), abs(imag(z))
@@ -73,7 +73,7 @@ function theta_wedge(z; pad = 0.10)
     return s * (x - x_outer) / (0 - x_outer)
 end
 
-#dissipative branch: 0/4 Pade repaired by the 1/3 Pade where it is unstable
+#dissipative branch is 0/4 Pade repaired by the 1/3 Pade where it is unstable
 function R_D(z)
     z = ComplexF64(z)
     th = theta_wedge(z)
