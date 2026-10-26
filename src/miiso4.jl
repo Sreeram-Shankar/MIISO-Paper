@@ -19,7 +19,7 @@ function R04(z)
     return 1 / (1 - z + z^2/2 - z^3/6 + z^4/24)
 end
 
-#fairly dissipative 4th order 1/3 diagonal Pade (A-stable) used to stitch the instability of the 0/4 Pade
+#fairly dissipative 4th order 1/3 diagonal Pade (Lobatto IIIC 3-stage 4th order) (A-stable) used to stitch the instability of the 0/4 Pade
 function R13(z)
     z = ComplexF64(z)
     return (1 + 0.25 * z) / (1 - 0.75 * z + 0.25 * z^2 - z^3/24)
