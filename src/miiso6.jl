@@ -1,6 +1,6 @@
 #MIISO6, Modal Integrator for Isogeometric Stabilization of Outliers (order 6).
 #the construction and methodi is described in the paper. The pade maps
-#are the [3,3] and [0,6] Pades. This method is rparied with the [2,4] Pade
+#are the [3,3] and [0,6] Pades. This method is repaired with the [2,4] Pade
 #on the 0/6 instability islands (around the LHP poles of R06, z ~ -0.8036 +/- 3.6977i).
 #the islands do not touch the imaginary axis so it is only in the left half
 

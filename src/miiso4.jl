@@ -1,6 +1,6 @@
 #MIISO4, Modal Integrator for Isogeometric Stabilization of Outliers (order 4).
 #the construction and method is described in the paper. The pade maps
-#are the [2,2] and [0,4] Pades. This method is rparied with the [1,3] Pade
+#are the [2,2] and [0,4] Pades. This method is repaired with the [1,3] Pade
 #inside its instability wedge (|R04(iw)| > 1 on 0 < |w| < sqrt(8)).
 
 include(joinpath(@__DIR__, "utilities.jl"))
