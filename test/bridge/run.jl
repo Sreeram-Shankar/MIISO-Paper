@@ -5,7 +5,7 @@
 include(joinpath(@__DIR__, "setup.jl"))
 using JSON
 
-T, h, km, dt_save = 11.5, 0.002, 40, 0.05
+T, h, km, dt_save = 11.5, 0.001, 40, 0.05
 sys = arch_bridge_system(BridgeParams())
 nf = sys.nfree
 omega_c = h * sys.omega_c
