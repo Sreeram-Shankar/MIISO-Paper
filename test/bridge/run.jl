@@ -1,4 +1,6 @@
 # calls the setup of the bridge and runs it with MIISO4
+# the JSON handling of this file and the scripting to run it on TACC
+#were AI-assisted
 
 include(joinpath(@__DIR__, "setup.jl"))
 using JSON
