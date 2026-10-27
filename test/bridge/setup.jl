@@ -38,7 +38,7 @@ Base.@kwdef struct BridgeParams
     jac_max_lag::Int = 50
 end
 
-# refinment of 1D NURBS curves with the Ferrite h and p refinement functions.
+# refinment of 1D NURBS curves with the Ferrite h and p refinement functions. I recently added these functions into FerriteIGA pls check them out
 function _refine_1d(cps::Vector{<:Vec}, ws::Vector{Float64}, kv::Vector{Float64}, order::Int, p_target::Int, nel::Int)
     cps, ws, kv = copy(cps), copy(ws), copy(kv)
     kvt = (kv,)
@@ -72,7 +72,7 @@ function arch_rib_mesh(P::BridgeParams)
     return NURBSMesh((a_kv, r_kv, z_kv), (oa, or_, oz), cps, ws), (R=R, theta=theta, yc=yc, rin=rin, rout=rout)
 end
 
-# B-splines
+# B-splines, this specific part and the derivative was written with some AI help for bookeeping
 function bsplines(kv::Vector{Float64}, p::Int, x::Float64)
     m = length(kv) - 1
     N = zeros(m)
