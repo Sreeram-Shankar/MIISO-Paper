@@ -52,4 +52,4 @@ julia --project=. --startup-file=no test/membrance/convergence.jl
 
 ### Disclaimer
 
-The figure scripts are mostly AI assisted. They are mechanical plotting. Whatever could be messed up was verified. The method itself is in `src/`. The tests and source are manually written, but with AI for assistance and prototyping, polishing and refinement. 
+The figure scripts are mostly AI assisted. They are mechanical plotting. Whatever could be messed up was verified. The method itself is in `src/`. The tests and source are manually written, with monitored and limited AI usage for assistance and prototyping, polishing and refinement. All such usage here was thoroughly reviewed for correctness.  
